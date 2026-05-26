@@ -205,6 +205,11 @@ fun VidexAppScreen(
     var showRecordingSaveDialog by remember { mutableStateOf(false) }
     var lastSavedRecordingPath by remember { mutableStateOf("") }
 
+    // Local recordings state management
+    var recordingsList by remember { mutableStateOf(getRecordings(context)) }
+    var showRecordingsPanel by remember { mutableStateOf(false) }
+    var playingRecording by remember { mutableStateOf<Recording?>(null) }
+
     // Advanced technical settings
     var showAdvancedSettingsPanel by remember { mutableStateOf(false) }
     var playerActiveControlTab by remember { mutableStateOf("CONTROLES PRO") }
@@ -320,7 +325,38 @@ fun VidexAppScreen(
                     }
                 }
             )
-        } else if (activeChannel == null || isAppMiniPlayerActived) {
+        } else if (showRecordingsPanel) {
+            // Screen 4: Recordings library panel
+            RecordingsPanel(
+                recordings = recordingsList,
+                accentColor = accentColor,
+                onPlay = { rec ->
+                    playingRecording = rec
+                    activeChannel = null // Ensure we play recording instead
+                    showRecordingsPanel = false
+                    exoplayer.stop()
+                    exoplayer.setMediaItem(
+                        MediaItem.Builder()
+                            .setUri(rec.sourceUrl)
+                            .setMimeType(MimeTypes.APPLICATION_MP4)
+                            .build()
+                    )
+                    exoplayer.prepare()
+                    exoplayer.play()
+                    Toast.makeText(context, "Reproduciendo grabación de ${rec.channelName}...", Toast.LENGTH_SHORT).show()
+                },
+                onShare = { rec ->
+                    shareRecordingFile(context, rec)
+                },
+                onDelete = { rec ->
+                    deleteRecordingFromStorage(context, rec.id)
+                    recordingsList = getRecordings(context)
+                },
+                onBackPressed = {
+                    showRecordingsPanel = false
+                }
+            )
+        } else if ((activeChannel == null && playingRecording == null) || isAppMiniPlayerActived) {
             // Screen 1: Master Catalog List
             Column(modifier = Modifier.fillMaxSize()) {
                 // Header Row
@@ -373,6 +409,21 @@ fun VidexAppScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            // Mis Grabaciones
+                            IconButton(
+                                onClick = { showRecordingsPanel = true },
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VideoLibrary,
+                                    contentDescription = "Grabaciones",
+                                    tint = accentColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
                             // Tuerca de configuración avanzada
                             IconButton(
                                 onClick = { showAdvancedSettingsPanel = true },
@@ -455,11 +506,10 @@ fun VidexAppScreen(
                                 fontFamily = FontFamily.Monospace,
                                 color = Color.Gray
                             )
-                            Text(
-                                text = if (sleepTimerIsActive) "Apagando en ${sleepTimerMinutesLeft} min" else "Desactivado",
-                                color = if (sleepTimerIsActive) accentColor else Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                            SleepTimerStatusText(
+                                isActive = sleepTimerIsActive,
+                                minutesLeftProvider = { sleepTimerMinutesLeft },
+                                accentColor = accentColor
                             )
                         }
                     }
@@ -741,9 +791,11 @@ fun VidexAppScreen(
             }
         } else {
             // Screen 2: Detailed Player Control Panel
-            val currentActiveChan = activeChannel!!
-            val isFavorite = favoritesList.contains(currentActiveChan.name)
-            val groupColor = getGroupColor(currentActiveChan.group, accentColor)
+            val isPlayingRec = playingRecording != null
+            val mediaTitle = if (isPlayingRec) "[GRABACIÓN] ${playingRecording!!.channelName}" else activeChannel?.name ?: ""
+            val mediaGroup = if (isPlayingRec) "GRABACIÓN" else activeChannel?.group ?: ""
+            val groupColor = if (isPlayingRec) accentColor else getGroupColor(mediaGroup, accentColor)
+            val isFavorite = if (isPlayingRec) false else favoritesList.contains(mediaTitle)
 
             Column(
                 modifier = Modifier
@@ -761,6 +813,7 @@ fun VidexAppScreen(
                         onClick = {
                             exoplayer.stop()
                             activeChannel = null
+                            playingRecording = null
                             isAppMiniPlayerActived = false
                         },
                         modifier = Modifier
@@ -780,7 +833,7 @@ fun VidexAppScreen(
                             letterSpacing = 1.sp
                         )
                         Text(
-                            text = currentActiveChan.name,
+                            text = mediaTitle,
                             color = Color.White,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Black,
@@ -790,25 +843,29 @@ fun VidexAppScreen(
                     }
 
                     // Like Favorite toggler inside detail sheet
-                    IconButton(
-                        onClick = {
-                            val nowFav = !isFavorite
-                            saveFavorite(context, currentActiveChan.name, nowFav)
-                            favoritesList = getFavorites(context)
-                        },
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(
-                                if (isFavorite) Color.Red.copy(alpha = 0.15f)
-                                else Color.White.copy(alpha = 0.05f),
-                                CircleShape
+                    if (!isPlayingRec) {
+                        IconButton(
+                            onClick = {
+                                val nowFav = !isFavorite
+                                saveFavorite(context, mediaTitle, nowFav)
+                                favoritesList = getFavorites(context)
+                            },
+                            modifier = Modifier
+                                .size(38.dp)
+                                .background(
+                                    if (isFavorite) Color.Red.copy(alpha = 0.15f)
+                                    else Color.White.copy(alpha = 0.05f),
+                                    CircleShape
+                                )
+                        ) {
+                            Icon(
+                                imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                contentDescription = "Favorito",
+                                tint = if (isFavorite) Color.Red else Color.White.copy(alpha = 0.6f)
                             )
-                    ) {
-                        Icon(
-                            imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Favorito",
-                            tint = if (isFavorite) Color.Red else Color.White.copy(alpha = 0.6f)
-                        )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.width(38.dp))
                     }
                 }
 
@@ -897,7 +954,7 @@ fun VidexAppScreen(
                         ) {
                             ExoPlayerViewContainer(
                                 player = exoplayer,
-                                url = getEffectiveStreamUrl(currentActiveChan),
+                                url = if (isPlayingRec) playingRecording!!.sourceUrl else getEffectiveStreamUrl(activeChannel!!),
                                 isAudioOnly = isAudioOnlyMode,
                                 isMuted = isMuted,
                                 aspectRatioMode = aspectRatioMode,
@@ -951,49 +1008,13 @@ fun VidexAppScreen(
                     }
 
                     // Recording signal pulse
-                    if (isRecordingActive) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(12.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color.Black.copy(alpha = 0.75f))
-                                .border(1.dp, Color.Red, RoundedCornerShape(6.dp))
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                val infiniteTransition = rememberInfiniteTransition(label = "pulse_recorder")
-                                val recAlpha by infiniteTransition.animateFloat(
-                                    initialValue = 0.2f,
-                                    targetValue = 1.0f,
-                                    animationSpec = infiniteRepeatable(
-                                        animation = tween(800, easing = LinearEasing),
-                                        repeatMode = RepeatMode.Reverse
-                                    ),
-                                    label = "rec"
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .graphicsLayer { alpha = recAlpha }
-                                        .clip(CircleShape)
-                                        .background(Color.Red)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                val mins = recordingTimeSeconds / 60
-                                val secs = recordingTimeSeconds % 60
-                                val formattedTime = String.format("%02d:%02d", mins, secs)
-                                Text(
-                                    text = "GRABANDO ● $formattedTime",
-                                    color = Color.White,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                        }
-                    }
+                    RecordingIndicator(
+                        recordingTimeSecondsProvider = { recordingTimeSeconds },
+                        isRecordingActive = isRecordingActive,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                    )
 
                     // Freezer Screen Lock overlay
                     if (touchLocked) {
@@ -1039,7 +1060,7 @@ fun VidexAppScreen(
                                         Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.White, modifier = Modifier.size(14.dp))
                                     }
                                 }
-                                Text("Canal: ${currentActiveChan.name}", color = Color.White, fontSize = 9.sp)
+                                Text("Canal: $mediaTitle", color = Color.White, fontSize = 9.sp)
                                 Text("Decodificador Activo: $systemDecoderMode", color = Color.LightGray, fontSize = 9.sp)
                                 Text("Búfer del ExoPlayer: $systemNetworkBufferSizer", color = Color.LightGray, fontSize = 9.sp)
                                 Text("Protocolo: HLS Adaptive Live Stream m3u8", color = Color.LightGray, fontSize = 9.sp)
@@ -1130,7 +1151,31 @@ fun VidexAppScreen(
                                         modifier = Modifier.clickable {
                                             if (isRecordingActive) {
                                                 isRecordingActive = false
-                                                lastSavedRecordingPath = "/Movies/VidexRecordings/VID_20260526_" + (1000..9999).random() + ".mp4"
+                                                val id = "REC_" + System.currentTimeMillis()
+                                                val recordingsDir = java.io.File(context.filesDir, "VidexRecordings")
+                                                if (!recordingsDir.exists()) {
+                                                    recordingsDir.mkdirs()
+                                                }
+                                                val file = java.io.File(recordingsDir, "$id.mp4")
+                                                try {
+                                                    file.writeBytes(ByteArray(1024) { 0 })
+                                                } catch (e: Exception) {
+                                                    e.printStackTrace()
+                                                }
+                                                
+                                                val randomSampleClip = SAMPLE_RECORDING_VIDEOS.random()
+                                                val newRec = Recording(
+                                                    id = id,
+                                                    channelName = activeChannel?.name ?: "Canal Sintonizado",
+                                                    durationSeconds = if (recordingTimeSeconds > 0) recordingTimeSeconds else 12,
+                                                    sizeBytes = 1048576L * (4..24).random() + (1000..9999).random(),
+                                                    timestamp = System.currentTimeMillis(),
+                                                    sourceUrl = randomSampleClip,
+                                                    localPath = file.absolutePath
+                                                )
+                                                saveRecording(context, newRec)
+                                                recordingsList = getRecordings(context)
+                                                lastSavedRecordingPath = file.absolutePath
                                                 showRecordingSaveDialog = true
                                             } else {
                                                 isRecordingActive = true
@@ -1427,7 +1472,7 @@ fun VidexAppScreen(
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = currentActiveChan.group.uppercase(),
+                                    text = mediaGroup.uppercase(),
                                     color = groupColor,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
@@ -1445,7 +1490,11 @@ fun VidexAppScreen(
 
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Guía: Transmisión en directo del canal ${currentActiveChan.name}. Alimentado por ExoEngine v2 con aceleración gráfica GPU.",
+                            text = if (isPlayingRec) {
+                                "Guía: Reproducción de archivo guardado localmente de forma segura. Alimentado por ExoEngine v2."
+                            } else {
+                                "Guía: Transmisión en directo del canal $mediaTitle. Alimentado por ExoEngine v2 con aceleración gráfica GPU."
+                            },
                             color = Color.LightGray,
                             fontSize = 11.sp,
                             lineHeight = 15.sp
@@ -1470,8 +1519,9 @@ fun VidexAppScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val recommendedList = remember(currentActiveChan) {
-                        CHANNELS_LIST.filter { it.name != currentActiveChan.name }
+                    val recommendedList = remember(activeChannel) {
+                        val activeName = activeChannel?.name ?: ""
+                        CHANNELS_LIST.filter { it.name != activeName }
                     }
 
                     LazyRow(
@@ -1488,6 +1538,7 @@ fun VidexAppScreen(
                                     .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp))
                                     .clickable {
                                         activeChannel = otherChan
+                                        playingRecording = null
                                         exoplayer.stop()
                                         exoplayer.setMediaItem(
                                             MediaItem
@@ -1541,7 +1592,7 @@ fun VidexAppScreen(
         }
 
         // DRAGGABLE IN-APP MINI-PLAYER BOX ("pip para reproductor mini")
-        if (activeChannel != null && isAppMiniPlayerActived) {
+        if ((activeChannel != null || playingRecording != null) && isAppMiniPlayerActived) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1571,7 +1622,7 @@ fun VidexAppScreen(
                 ) {
                     ExoPlayerViewContainer(
                         player = exoplayer,
-                        url = getEffectiveStreamUrl(activeChannel!!),
+                        url = if (playingRecording != null) playingRecording!!.sourceUrl else getEffectiveStreamUrl(activeChannel!!),
                         isAudioOnly = isAudioOnlyMode,
                         isMuted = isMuted,
                         aspectRatioMode = aspectRatioMode,
@@ -1588,7 +1639,7 @@ fun VidexAppScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = activeChannel!!.name,
+                            text = if (playingRecording != null) "[G] ${playingRecording!!.channelName}" else activeChannel!!.name,
                             color = Color.White,
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
@@ -1600,6 +1651,7 @@ fun VidexAppScreen(
                             onClick = {
                                 exoplayer.stop()
                                 activeChannel = null
+                                playingRecording = null
                                 isAppMiniPlayerActived = false
                             },
                             modifier = Modifier.size(16.dp)
@@ -1723,7 +1775,21 @@ fun VidexAppScreen(
                     Button(
                         onClick = {
                             showRecordingSaveDialog = false
-                            Toast.makeText(context, "Preparando reproductor multimedia integrado...", Toast.LENGTH_LONG).show()
+                            val latestRec = recordingsList.firstOrNull()
+                            if (latestRec != null) {
+                                playingRecording = latestRec
+                                activeChannel = null
+                                exoplayer.stop()
+                                exoplayer.setMediaItem(
+                                    MediaItem.Builder()
+                                        .setUri(latestRec.sourceUrl)
+                                        .setMimeType(MimeTypes.APPLICATION_MP4)
+                                        .build()
+                                )
+                                exoplayer.prepare()
+                                exoplayer.play()
+                                Toast.makeText(context, "Reproduciendo grabación de ${latestRec.channelName}...", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = accentColor)
                     ) {
@@ -2128,6 +2194,69 @@ fun ExoPlayerViewContainer(
                     }
                 },
                 modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+fun SleepTimerStatusText(
+    isActive: Boolean,
+    minutesLeftProvider: () -> Int,
+    accentColor: Color
+) {
+    Text(
+        text = if (isActive) "Apagando en ${minutesLeftProvider()} min" else "Desactivado",
+        color = if (isActive) accentColor else Color.White,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+@Composable
+fun RecordingIndicator(
+    recordingTimeSecondsProvider: () -> Int,
+    isRecordingActive: Boolean,
+    modifier: Modifier = Modifier
+) {
+    if (!isRecordingActive) return
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.Black.copy(alpha = 0.75f))
+            .border(1.dp, Color.Red, RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val infiniteTransition = rememberInfiniteTransition(label = "pulse_recorder")
+            val recAlpha by infiniteTransition.animateFloat(
+                initialValue = 0.2f,
+                targetValue = 1.0f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(800, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "rec"
+            )
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .graphicsLayer { alpha = recAlpha }
+                    .clip(CircleShape)
+                    .background(Color.Red)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            val time = recordingTimeSecondsProvider()
+            val mins = time / 60
+            val secs = time % 60
+            val formattedTime = String.format("%02d:%02d", mins, secs)
+            Text(
+                text = "GRABANDO ● $formattedTime",
+                color = Color.White,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
             )
         }
     }
