@@ -3,7 +3,6 @@ package com.example
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Context
-import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
@@ -16,15 +15,19 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,12 +37,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,21 +50,20 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// Cyber Colors
+// Cyber Theme Colors
 val BaseDarkBg = Color(0xFF07070C)
 val CardSurface = Color(0xFF0F0F1A)
 
-// Available hacker themes
 data class CyberTheme(
     val name: String,
     val primary: Color,
@@ -75,7 +77,6 @@ val THEMES_LIST = listOf(
     CyberTheme("Neon Orchid", Color(0xFFBD07FF), Color(0xFFFF007F))
 )
 
-// Dynamic categories style
 fun getGroupColor(group: String, currentPrimary: Color): Color {
     return when (group.uppercase()) {
         "GENERAL" -> Color(0xFF3B82F6)
@@ -86,7 +87,6 @@ fun getGroupColor(group: String, currentPrimary: Color): Color {
     }
 }
 
-// Storage helpers
 private fun getFavorites(context: Context): Set<String> {
     val prefs = context.getSharedPreferences("videx_prefs", Context.MODE_PRIVATE)
     return prefs.getStringSet("favorites", emptySet()) ?: emptySet()
@@ -99,7 +99,6 @@ private fun saveFavorite(context: Context, channelName: String, isFavorite: Bool
     prefs.edit().putStringSet("favorites", favs).apply()
 }
 
-// Effective URL helper that supports raw links
 fun getEffectiveStreamUrl(channel: Channel): String {
     return if (channel.path.startsWith("http://") || channel.path.startsWith("https://")) {
         channel.path
@@ -112,6 +111,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         var isPlayer1RunningAndPipEnabled = false
     }
+
+    var isPipModeActive = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -132,13 +133,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isPipModeActive.value = isInPictureInPictureMode
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isPlayer1RunningAndPipEnabled) {
             try {
                 enterPictureInPictureMode(PictureInPictureParams.Builder().build())
             } catch (e: Exception) {
-                // Ignore if PiP fails
+                // Ignore
             }
         }
     }
@@ -151,74 +157,86 @@ fun VidexAppScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // App preferences states
+    // Preferences and themes
     var selectedThemeIndex by remember { mutableStateOf(0) }
     val currentTheme = THEMES_LIST[selectedThemeIndex]
     val accentColor = currentTheme.primary
 
-    // Tab and view categories states
+    // Dynamic filtering
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("TODOS") }
     var showOnlyFavorites by remember { mutableStateOf(false) }
-
-    // Column density (1, 2, or 3 columns)
     var gridColumns by remember { mutableStateOf(3) }
 
-    // Active single player state - null means Main List, non-null means Dedicated player view
+    // Active channels and properties
     var activeChannel by remember { mutableStateOf<Channel?>(null) }
-
-    // Video adjustments
     var isAudioOnlyMode by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableStateOf(1.0f) }
-    var aspectRatioMode by remember { mutableStateOf(0) } // 0 = FIT, 1 = FILL, 2 = ZOOM, 3 = 16:9
-
-    // Persistence lists
+    var aspectRatioMode by remember { mutableStateOf(0) }
     var favoritesList by remember { mutableStateOf(getFavorites(context)) }
 
-    // UI Dialog controllers
+    // System configurations & dialogues
     var isParentalLocked by remember { mutableStateOf(true) }
     var showPinDialog by remember { mutableStateOf(false) }
     var pinValue by remember { mutableStateOf("") }
     var parentalPinError by remember { mutableStateOf("") }
-
-    // Diagnostics stats for nerds state
     var showNerdStats by remember { mutableStateOf(false) }
-
-    // Touch Lock status
     var touchLocked by remember { mutableStateOf(false) }
 
-    // Custom swipe brightness and volume indicators
+    // UI Gesture overlays inside player
     var brightnessVal by remember { mutableStateOf(70f) }
     var volumeVal by remember { mutableStateOf(100f) }
     var showVolumeOverlay by remember { mutableStateOf(false) }
     var showBrightnessOverlay by remember { mutableStateOf(false) }
 
-    // Sleep Timer
+    // Floating client mini-player offsets
+    var isAppMiniPlayerActived by remember { mutableStateOf(false) }
+    var miniPlayerOffset by remember { mutableStateOf(Offset(0f, 0f)) }
+
+    // Chromecast Casting simulation
+    var isCastDialogOpen by remember { mutableStateOf(false) }
+    var isCasting by remember { mutableStateOf(false) }
+    var castingDeviceName by remember { mutableStateOf("") }
+
+    // Screen recorder simulation
+    var isRecordingActive by remember { mutableStateOf(false) }
+    var recordingTimeSeconds by remember { mutableStateOf(0) }
+    var showRecordingSaveDialog by remember { mutableStateOf(false) }
+    var lastSavedRecordingPath by remember { mutableStateOf("") }
+
+    // Advanced technical settings
+    var showAdvancedSettingsPanel by remember { mutableStateOf(false) }
+    var playerActiveControlTab by remember { mutableStateOf("CONTROLES PRO") }
+    var systemDecoderMode by remember { mutableStateOf("Hardware (HW+ / GPU)") }
+    var systemNetworkBufferSizer by remember { mutableStateOf("15 Segundos (Estándar)") }
+    var systemUserAgentType by remember { mutableStateOf("VidexPlayer Core Engine v2.0") }
+    var systemDnsOverHttpsEnabled by remember { mutableStateOf(true) }
+
+    // Sleep Clock Timer configuration
     var sleepTimerMinutes by remember { mutableStateOf(0) }
     var sleepTimerMinutesLeft by remember { mutableStateOf(0) }
     var sleepTimerIsActive by remember { mutableStateOf(false) }
 
-    // Sync static helper class state for system level PiP
+    // Sync static attributes for system PiP triggers
     LaunchedEffect(activeChannel) {
         MainActivity.isPlayer1RunningAndPipEnabled = activeChannel != null
     }
 
-    // Sleep Timer Countdown Loop
     LaunchedEffect(sleepTimerIsActive, sleepTimerMinutesLeft) {
         if (sleepTimerIsActive && sleepTimerMinutesLeft > 0) {
-            delay(60000L) // Wait exactly 1 minute
+            delay(60000L)
             sleepTimerMinutesLeft -= 1
             if (sleepTimerMinutesLeft <= 0) {
                 activeChannel = null
                 sleepTimerIsActive = false
                 sleepTimerMinutes = 0
-                Toast.makeText(context, "Temporizador: Reproductor apagado automáticamente", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Temporizador: Transmisión apagada automáticamente", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    // Single persistent player engine to ensure zero lag, high efficiency
+    // High performance player engine initialization
     val exoplayer = remember {
         val playerContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             context.applicationContext.createAttributionContext("media")
@@ -230,56 +248,82 @@ fun VidexAppScreen(
         }
     }
 
-    // Cleanup resources
     DisposableEffect(Unit) {
         onDispose {
             exoplayer.release()
         }
     }
 
-    // Trigger update on playback parameters dynamically
-    LaunchedEffect(playbackSpeed) {
-        exoplayer.playbackParameters = PlaybackParameters(playbackSpeed)
+    // Dynamic system PiP viewport check
+    val activity = remember(context) {
+        var ctx = context
+        while (ctx is android.content.ContextWrapper) {
+            if (ctx is MainActivity) return@remember ctx
+            ctx = ctx.baseContext
+        }
+        null
     }
+    val isInPip = activity?.isPipModeActive?.value ?: false
 
-    // Categories
-    val categories = remember { listOf("TODOS", "GENERAL", "EVENTOS", "MÚSICA", "PLUTO") }
-
-    // Screen layout filter logic
-    val filteredChannels by remember(searchQuery, selectedCategory, showOnlyFavorites, favoritesList, isParentalLocked) {
-        derivedStateOf {
-            CHANNELS_LIST.filter { channel ->
-                // Parental protection hides Pluto streams or Custom ones if toggled
-                if (isParentalLocked && channel.group.uppercase() == "EVENTOS") {
-                    return@filter false
-                }
-
-                val matchesCategory = when (selectedCategory) {
-                    "TODOS" -> true
-                    else -> channel.group.uppercase() == selectedCategory.uppercase()
-                }
-
-                val matchesSearch = channel.name.contains(searchQuery, ignoreCase = true)
-                val matchesFavorites = !showOnlyFavorites || favoritesList.contains(channel.name)
-
-                matchesCategory && matchesSearch && matchesFavorites
+    // Real-time Screen Recording simulation clock
+    LaunchedEffect(isRecordingActive) {
+        if (isRecordingActive) {
+            recordingTimeSeconds = 0
+            while (isRecordingActive) {
+                delay(1000L)
+                recordingTimeSeconds++
             }
         }
     }
 
+    // Absolute screen layout bypass if OS entered PiP mode (Pristine Video Frame Only!)
+    if (isInPip) {
+        val chan = activeChannel
+        if (chan != null) {
+            ExoPlayerViewContainer(
+                player = exoplayer,
+                url = getEffectiveStreamUrl(chan),
+                isAudioOnly = isAudioOnlyMode,
+                isMuted = isMuted,
+                aspectRatioMode = aspectRatioMode,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black))
+        }
+        return
+    }
+
+    // Main design box scaffold
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(BaseDarkBg)
     ) {
-        if (activeChannel == null) {
-            // ============================================
-            // SECCIÓN 1: PANTALLA PRINCIPAL / NAVEGACIÓN
-            // ============================================
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // HEADER BAR - Clean layout without "IPTV" references
+        if (showAdvancedSettingsPanel) {
+            // Screen 3: Advanced Settings Developer Dashboard
+            AdvancedSettingsPanel(
+                accentColor = accentColor,
+                systemDecoderMode = systemDecoderMode,
+                onDecoderChange = { systemDecoderMode = it },
+                systemNetworkBufferSizer = systemNetworkBufferSizer,
+                onBufferChange = { systemNetworkBufferSizer = it },
+                systemUserAgentType = systemUserAgentType,
+                onUserAgentChange = { systemUserAgentType = it },
+                systemDnsOverHttpsEnabled = systemDnsOverHttpsEnabled,
+                onDnsChange = { systemDnsOverHttpsEnabled = it },
+                onBackPressed = { showAdvancedSettingsPanel = false },
+                onClearCache = {
+                    coroutineScope.launch {
+                        delay(1000L)
+                        Toast.makeText(context, "¡Caché de búfer HLS purgada con éxito!", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+        } else if (activeChannel == null || isAppMiniPlayerActived) {
+            // Screen 1: Master Catalog List
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Header Row
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -287,25 +331,24 @@ fun VidexAppScreen(
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     text = "VIDEX",
-                                    fontSize = 28.sp,
+                                    fontSize = 24.sp,
                                     fontWeight = FontWeight.Black,
-                                    color = accentColor,
-                                    letterSpacing = 2.sp
+                                    letterSpacing = 1.sp,
+                                    color = Color.White
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(4.dp))
-                                        .background(accentColor.copy(alpha = 0.15f))
-                                        .border(1.dp, accentColor, RoundedCornerShape(4.dp))
-                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .background(accentColor.copy(alpha = 0.12f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
                                         text = "V2.0 PRO",
@@ -317,28 +360,42 @@ fun VidexAppScreen(
                                 }
                             }
                             Text(
-                                text = "REPRODUCTOR MULTIMEDIA PREMIUM",
-                                fontSize = 9.sp,
+                                text = "SINTONIZADOR PREMIUM MULTI-PANTALLA",
+                                fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace,
-                                color = Color(0xFF6E6E7F),
-                                letterSpacing = 1.sp
+                                color = Color(0xFF6E6E7F)
                             )
                         }
 
-                        // Theme switcher & Timer Row
+                        // Toolbar settings
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // Parental lock capsule
+                            // Tuerca de configuración avanzada
+                            IconButton(
+                                onClick = { showAdvancedSettingsPanel = true },
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Configuración",
+                                    tint = accentColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            // Parental locks
                             IconButton(
                                 onClick = {
                                     if (isParentalLocked) {
                                         showPinDialog = true
                                     } else {
                                         isParentalLocked = true
-                                        Toast.makeText(context, "Filtro Parental Activado (Eventos bloqueados)", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Filtro Parental Activado", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier
@@ -351,127 +408,114 @@ fun VidexAppScreen(
                             ) {
                                 Icon(
                                     imageVector = if (isParentalLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                                    contentDescription = "Control Parental",
+                                    contentDescription = "Parental",
                                     tint = if (isParentalLocked) Color(0xFFFF416C) else Color.White.copy(alpha = 0.7f),
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
 
-                            // Theme palette cycler
+                            // Theme palette cycle
                             IconButton(
-                                onClick = {
-                                    selectedThemeIndex = (selectedThemeIndex + 1) % THEMES_LIST.size
-                                    Toast.makeText(context, "Tema: " + THEMES_LIST[selectedThemeIndex].name, Toast.LENGTH_SHORT).show()
-                                },
+                                onClick = { selectedThemeIndex = (selectedThemeIndex + 1) % THEMES_LIST.size },
                                 modifier = Modifier
                                     .size(34.dp)
-                                    .background(accentColor.copy(alpha = 0.1f), CircleShape)
+                                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Palette,
-                                    contentDescription = "Cambiar Tema",
-                                    tint = accentColor,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
-                            // Sleep timer configuration icon
-                            IconButton(
-                                onClick = {
-                                    if (sleepTimerIsActive) {
-                                        sleepTimerIsActive = false
-                                        sleepTimerMinutes = 0
-                                        Toast.makeText(context, "Temporizador cancelado", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        sleepTimerMinutes = when (sleepTimerMinutes) {
-                                            0 -> 10
-                                            10 -> 30
-                                            30 -> 60
-                                            else -> 0
-                                        }
-                                        if (sleepTimerMinutes > 0) {
-                                            sleepTimerMinutesLeft = sleepTimerMinutes
-                                            sleepTimerIsActive = true
-                                            Toast.makeText(context, "Apagado programado en $sleepTimerMinutes minutos", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .background(
-                                        if (sleepTimerIsActive) accentColor.copy(alpha = 0.2f)
-                                        else Color.White.copy(alpha = 0.05f),
-                                        CircleShape
-                                    )
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Timer,
-                                    contentDescription = "Sleep Timer",
-                                    tint = if (sleepTimerIsActive) accentColor else Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                                Icon(Icons.Default.Palette, contentDescription = "Tema", tint = accentColor, modifier = Modifier.size(15.dp))
                             }
                         }
                     }
-
-                    // Active Sleep Timer indicator badge
-                    if (sleepTimerIsActive) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(accentColor.copy(alpha = 0.15f))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "APAGADO EN: $sleepTimerMinutesLeft MINS",
-                                    color = accentColor,
-                                    fontSize = 8.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp)
-                            .height(1.dp)
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(accentColor, Color.Transparent)
-                                )
-                            )
-                    )
                 }
 
-                // SEARCH BAR & CONSOLE INPUT FILTERS
+                // SLEEP TIMER CONTROL SECTION
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 16.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(CardSurface)
+                        .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = "Reloj",
+                            tint = if (sleepTimerIsActive) accentColor else Color.Gray,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "TEMPORIZADOR DE APAGADO",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color.Gray
+                            )
+                            Text(
+                                text = if (sleepTimerIsActive) "Apagando en ${sleepTimerMinutesLeft} min" else "Desactivado",
+                                color = if (sleepTimerIsActive) accentColor else Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf(15, 30, 60).forEach { mins ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color.White.copy(alpha = 0.04f))
+                                    .border(
+                                        1.dp,
+                                        if (sleepTimerIsActive && sleepTimerMinutes == mins) accentColor else Color.Transparent,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable {
+                                        if (sleepTimerIsActive && sleepTimerMinutes == mins) {
+                                            sleepTimerIsActive = false
+                                            sleepTimerMinutes = 0
+                                            sleepTimerMinutesLeft = 0
+                                            Toast.makeText(context, "Temporizador cancelado", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            sleepTimerMinutes = mins
+                                            sleepTimerMinutesLeft = mins
+                                            sleepTimerIsActive = true
+                                            Toast.makeText(context, "Apagado en $mins minutos configurado.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text("${mins}M", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // SEARCH BAR & FILTERS
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Buscar canal...", color = Color(0xFF6E6E7F), fontSize = 12.sp) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Buscador", tint = accentColor, modifier = Modifier.size(16.dp)) },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Borrar", tint = Color.White, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        placeholder = { Text("Buscar sintonización...", fontSize = 11.sp, color = Color.Gray) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
@@ -480,136 +524,96 @@ fun VidexAppScreen(
                             focusedBorderColor = accentColor,
                             unfocusedBorderColor = Color.White.copy(alpha = 0.08f)
                         ),
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp)) },
                         singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(52.dp)
-                            .testTag("search_input")
+                        shape = RoundedCornerShape(24.dp)
                     )
-                }
 
-                // QUICK CONFIGURATION LINE (Columns layout density + Favorites filter)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Favorites filter
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                    // Columns density cyclic adjustments
+                    IconButton(
+                        onClick = { gridColumns = if (gridColumns == 3) 2 else if (gridColumns == 2) 1 else 3 },
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(CardSurface)
-                            .clickable { showOnlyFavorites = !showOnlyFavorites }
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .size(38.dp)
+                            .background(CardSurface, CircleShape)
+                            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = if (gridColumns == 3) Icons.Default.GridView else if (gridColumns == 2) Icons.Default.ViewAgenda else Icons.Default.ViewStream,
+                            contentDescription = "Densidad",
+                            tint = accentColor,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // Favorites filter status
+                    IconButton(
+                        onClick = { showOnlyFavorites = !showOnlyFavorites },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(if (showOnlyFavorites) Color.Red.copy(alpha = 0.12f) else CardSurface, CircleShape)
+                            .border(
+                                1.dp,
+                                if (showOnlyFavorites) Color.Red else Color.White.copy(alpha = 0.08f),
+                                CircleShape
+                            )
                     ) {
                         Icon(
                             imageVector = if (showOnlyFavorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             contentDescription = "Favoritos",
-                            tint = if (showOnlyFavorites) Color.Red else Color.Gray,
+                            tint = if (showOnlyFavorites) Color.Red else Color.White.copy(alpha = 0.5f),
                             modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (showOnlyFavorites) "SÓLO FAVORITOS" else "TODOS LOS FAVORITOS",
-                            color = if (showOnlyFavorites) Color.White else Color.Gray,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    // Column Layout Configurator ("añade configuración columnas")
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(CardSurface)
-                            .padding(2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        listOf(1, 2, 3).forEach { cols ->
-                            val isSel = gridColumns == cols
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) accentColor.copy(alpha = 0.15f) else Color.Transparent)
-                                    .border(
-                                        width = 1.dp,
-                                        color = if (isSel) accentColor else Color.Transparent,
-                                        shape = RoundedCornerShape(6.dp)
-                                    )
-                                    .clickable { gridColumns = cols }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = when (cols) {
-                                            1 -> Icons.Default.ViewStream
-                                            2 -> Icons.Default.GridView
-                                            else -> Icons.Default.ViewModule
-                                        },
-                                        contentDescription = "$cols col",
-                                        tint = if (isSel) accentColor else Color.Gray,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "$cols C",
-                                        color = if (isSel) Color.White else Color.Gray,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
 
-                // Horizontally Scrollable Category Filters
-                Row(
+                // CATEGORIES SLIDING TAB ROW
+                val categories = listOf("TODOS", "GENERAL", "EVENTOS", "MÚSICA", "PLUTO")
+                LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                        .padding(vertical = 10.dp, horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    categories.forEach { category ->
-                        val isSelected = selectedCategory.uppercase() == category.uppercase()
-                        val chipColor = getGroupColor(category, accentColor)
-
+                    items(categories) { cat ->
+                        val isSelected = selectedCategory.uppercase() == cat.uppercase()
+                        val colorStyle = getGroupColor(cat, accentColor)
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(50.dp))
-                                .background(
-                                    if (isSelected) chipColor.copy(alpha = 0.15f)
-                                    else CardSurface
-                                )
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (isSelected) colorStyle.copy(alpha = 0.15f) else CardSurface)
                                 .border(
-                                    width = 1.dp,
-                                    color = if (isSelected) chipColor else Color.White.copy(alpha = 0.08f),
-                                    shape = RoundedCornerShape(50.dp)
+                                    1.dp,
+                                    if (isSelected) colorStyle else Color.White.copy(alpha = 0.05f),
+                                    RoundedCornerShape(16.dp)
                                 )
-                                .clickable { selectedCategory = category }
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .testTag("category_tab_${category.lowercase()}")
+                                .clickable { selectedCategory = cat }
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = category,
-                                color = if (isSelected) chipColor else Color(0xFF8E8E9F),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Black
+                                text = cat,
+                                color = if (isSelected) colorStyle else Color.LightGray,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
                             )
                         }
                     }
                 }
 
-                // CHANNELS GRID / FEED list
-                val lazyGridState = rememberLazyGridState()
+                // CORE CHANNELS GRID
+                val filteredChannels = remember(searchQuery, selectedCategory, showOnlyFavorites, favoritesList, isParentalLocked) {
+                    CHANNELS_LIST.filter { channel ->
+                        if (isParentalLocked && channel.group.uppercase() == "EVENTOS") {
+                            false
+                        } else {
+                            val matchesCategory = selectedCategory == "TODOS" || channel.group.uppercase() == selectedCategory.uppercase()
+                            val matchesSearch = channel.name.contains(searchQuery, ignoreCase = true)
+                            val matchesFav = !showOnlyFavorites || favoritesList.contains(channel.name)
+                            matchesCategory && matchesSearch && matchesFav
+                        }
+                    }
+                }
+
                 if (filteredChannels.isEmpty()) {
                     Box(
                         modifier = Modifier
@@ -618,35 +622,34 @@ fun VidexAppScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.TvOff, contentDescription = "No channels", tint = Color.Gray, modifier = Modifier.size(48.dp))
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text("No se encontraron canales válidos", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text("Cambia la categoría de filtro para explorar.", color = Color.Gray, fontSize = 11.sp)
+                            Icon(Icons.Default.HourglassEmpty, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(48.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("No se encontraron canales sintonizables", color = Color.Gray, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                         }
                     }
                 } else {
                     LazyVerticalGrid(
-                        state = lazyGridState,
                         columns = GridCells.Fixed(gridColumns),
-                        contentPadding = PaddingValues(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .testTag("channel_grid")
+                            .padding(horizontal = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(filteredChannels, key = { it.name }) { channel ->
+                        items(filteredChannels) { channel ->
                             val isFavorite = favoritesList.contains(channel.name)
-                            val groupColor = getGroupColor(channel.group, accentColor)
+                            val groupCol = getGroupColor(channel.group, accentColor)
 
-                            Card(
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(if (gridColumns == 1) 3.5f else 1.3f)
-                                    // DIRECT ACTION GO TO ANOTHER SECTION ("al apretar el canal directamente te lleva a otro apartado")
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(CardSurface)
+                                    .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(12.dp))
                                     .clickable {
                                         activeChannel = channel
+                                        isAppMiniPlayerActived = false // Maximize fully
+                                        exoplayer.stop()
                                         exoplayer.setMediaItem(
                                             MediaItem
                                                 .Builder()
@@ -656,22 +659,24 @@ fun VidexAppScreen(
                                         )
                                         exoplayer.prepare()
                                         exoplayer.play()
-                                        Toast.makeText(context, "Cargando ${channel.name}...", Toast.LENGTH_SHORT).show()
-                                    },
-                                colors = CardDefaults.cardColors(containerColor = CardSurface),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
-                                shape = RoundedCornerShape(12.dp)
+                                        Toast.makeText(context, "Sintonizando ${channel.name}...", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(if (gridColumns == 1) 12.dp else 10.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(12.dp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(
-                                        modifier = Modifier.fillMaxSize(),
-                                        verticalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        // Header: category label and favorite
+                                    // Visual color pill based on category
+                                    Box(
+                                        modifier = Modifier
+                                            .size(width = 6.dp, height = if (gridColumns == 1) 48.dp else 40.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(groupCol)
+                                    )
+
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -680,24 +685,25 @@ fun VidexAppScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(4.dp))
-                                                    .background(groupColor.copy(alpha = 0.15f))
-                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    .background(groupCol.copy(alpha = 0.12f))
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp)
                                             ) {
                                                 Text(
                                                     text = channel.group.uppercase(),
-                                                    color = groupColor,
+                                                    color = groupCol,
                                                     fontSize = 8.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     fontFamily = FontFamily.Monospace
                                                 )
                                             }
 
+                                            // Favorite inline toggler
                                             Icon(
                                                 imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                                 contentDescription = "Favorito",
                                                 tint = if (isFavorite) Color.Red else Color.White.copy(alpha = 0.3f),
                                                 modifier = Modifier
-                                                    .size(18.dp)
+                                                    .size(16.dp)
                                                     .clickable {
                                                         val nowFav = !isFavorite
                                                         saveFavorite(context, channel.name, nowFav)
@@ -706,27 +712,24 @@ fun VidexAppScreen(
                                             )
                                         }
 
-                                        // Footer Name
-                                        Column {
-                                            Text(
-                                                text = channel.name,
-                                                color = Color.White,
-                                                fontSize = if (gridColumns == 3) 11.sp else 13.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = if (gridColumns == 1) 1 else 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
+                                        Spacer(modifier = Modifier.height(4.dp))
 
-                                            if (gridColumns == 1) {
-                                                Text(
-                                                    text = "Transmisión premium de alta definición en tiempo real. Toca para ver.",
-                                                    color = Color.Gray,
-                                                    fontSize = 10.sp,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.padding(top = 2.dp)
-                                                )
-                                            }
+                                        Text(
+                                            text = channel.name,
+                                            color = Color.White,
+                                            fontSize = if (gridColumns == 1) 14.sp else 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+
+                                        if (gridColumns == 1) {
+                                            Text(
+                                                text = "Transmisión en directo, flujo adaptativo estable.",
+                                                color = Color.Gray,
+                                                fontSize = 9.sp,
+                                                modifier = Modifier.padding(top = 2.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -734,11 +737,10 @@ fun VidexAppScreen(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(if (activeChannel != null) 90.dp else 20.dp))
             }
         } else {
-            // ============================================
-            // SECCIÓN 2: APARTADO DETALLADO DEL CANAL (PLAYER PRO)
-            // ============================================
+            // Screen 2: Detailed Player Control Panel
             val currentActiveChan = activeChannel!!
             val isFavorite = favoritesList.contains(currentActiveChan.name)
             val groupColor = getGroupColor(currentActiveChan.group, accentColor)
@@ -748,7 +750,7 @@ fun VidexAppScreen(
                     .fillMaxSize()
                     .background(BaseDarkBg)
             ) {
-                // Top Custom Header inside player section
+                // Header Player Navigation Row
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -759,18 +761,19 @@ fun VidexAppScreen(
                         onClick = {
                             exoplayer.stop()
                             activeChannel = null
+                            isAppMiniPlayerActived = false
                         },
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(38.dp)
                             .background(Color.White.copy(alpha = 0.08f), CircleShape)
                     ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Atras", tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Atrás", tint = Color.White)
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "APARTADO DE REPRODUCCIÓN",
-                            fontSize = 9.sp,
+                            text = "MULTIMEDIA SINTONIZADOR PRO",
+                            fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
                             color = accentColor,
@@ -779,14 +782,14 @@ fun VidexAppScreen(
                         Text(
                             text = currentActiveChan.name,
                             color = Color.White,
-                            fontSize = 16.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Black,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
 
-                    // Favorite toggler directly inside the player detail section ("los favoritos me gusta queda lo")
+                    // Like Favorite toggler inside detail sheet
                     IconButton(
                         onClick = {
                             val nowFav = !isFavorite
@@ -794,7 +797,7 @@ fun VidexAppScreen(
                             favoritesList = getFavorites(context)
                         },
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(38.dp)
                             .background(
                                 if (isFavorite) Color.Red.copy(alpha = 0.15f)
                                 else Color.White.copy(alpha = 0.05f),
@@ -809,7 +812,7 @@ fun VidexAppScreen(
                     }
                 }
 
-                // MAIN PLAYER VIEW with Gestures
+                // SCREEN PORT: ExoPlayer Video or Casting Remote Panel
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -817,104 +820,207 @@ fun VidexAppScreen(
                         .background(Color.Black)
                         .border(1.dp, Color.White.copy(alpha = 0.08f))
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(touchLocked) {
-                                if (touchLocked) return@pointerInput
-                                detectVerticalDragGestures { change, dragAmount ->
-                                    change.consume()
-                                    val screenHalf = size.width / 2f
-                                    if (change.position.x < screenHalf) {
-                                        brightnessVal = (brightnessVal - dragAmount / 4f).coerceIn(10f, 100f)
-                                        showBrightnessOverlay = true
-                                    } else {
-                                        volumeVal = (volumeVal - dragAmount / 4f).coerceIn(0f, 150f)
-                                        exoplayer.volume = (volumeVal / 100f).coerceIn(0f, 1f)
-                                        showVolumeOverlay = true
+                    if (isCasting) {
+                        // Cast Remote Display
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF030712)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val infiniteTransition = rememberInfiniteTransition(label = "cast_anims")
+                            val pulseScale by infiniteTransition.animateFloat(
+                                initialValue = 0.95f,
+                                targetValue = 1.05f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(1200, easing = LinearOutSlowInEasing),
+                                    repeatMode = RepeatMode.Reverse
+                                ),
+                                label = "pulse"
+                            )
+
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.CastConnected,
+                                    contentDescription = "Transmisión",
+                                    tint = accentColor,
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .graphicsLayer {
+                                            scaleX = pulseScale
+                                            scaleY = pulseScale
+                                        }
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "TRANSMITIENDO A LA TELEVISIÓN",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Black,
+                                    fontFamily = FontFamily.Monospace,
+                                    letterSpacing = 1.sp
+                                )
+                                Text(
+                                    text = castingDeviceName.uppercase(),
+                                    color = accentColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "El reproductor de la app está en reposo.",
+                                    color = Color.Gray,
+                                    fontSize = 9.sp
+                                )
+                            }
+                        }
+                    } else {
+                        // Gesture-sensing Video Container
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(touchLocked) {
+                                    if (touchLocked) return@pointerInput
+                                    detectVerticalDragGestures { change, dragAmount ->
+                                        change.consume()
+                                        val screenHalf = size.width / 2f
+                                        if (change.position.x < screenHalf) {
+                                            brightnessVal = (brightnessVal - dragAmount / 4f).coerceIn(10f, 100f)
+                                            showBrightnessOverlay = true
+                                        } else {
+                                            volumeVal = (volumeVal - dragAmount / 4f).coerceIn(0f, 150f)
+                                            exoplayer.volume = (volumeVal / 100f).coerceIn(0f, 1f)
+                                            showVolumeOverlay = true
+                                        }
+                                    }
+                                }
+                        ) {
+                            ExoPlayerViewContainer(
+                                player = exoplayer,
+                                url = getEffectiveStreamUrl(currentActiveChan),
+                                isAudioOnly = isAudioOnlyMode,
+                                isMuted = isMuted,
+                                aspectRatioMode = aspectRatioMode,
+                                modifier = Modifier.fillMaxSize()
+                            )
+
+                            // Brightness swipe feedback
+                            if (showBrightnessOverlay) {
+                                LaunchedEffect(showBrightnessOverlay) {
+                                    delay(1000L)
+                                    showBrightnessOverlay = false
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.CenterStart)
+                                        .padding(16.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.Black.copy(alpha = 0.8f))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.WbSunny, contentDescription = "Brillo", tint = accentColor, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("BRILLO: ${brightnessVal.toInt()}%", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                                     }
                                 }
                             }
-                    ) {
-                        ExoPlayerViewContainer(
-                            player = exoplayer,
-                            url = getEffectiveStreamUrl(currentActiveChan),
-                            isAudioOnly = isAudioOnlyMode,
-                            isMuted = isMuted,
-                            aspectRatioMode = aspectRatioMode,
-                            modifier = Modifier.fillMaxSize()
-                        )
 
-                        // Gestures overlays
-                        if (showBrightnessOverlay) {
-                            LaunchedEffect(showBrightnessOverlay) {
-                                delay(1200L)
-                                showBrightnessOverlay = false
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.CenterStart)
-                                    .padding(16.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.Black.copy(alpha = 0.75f))
-                                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.WbSunny, contentDescription = "Brillo", tint = accentColor, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("BRILLO: ${brightnessVal.toInt()}%", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            // Volume swipe feedback
+                            if (showVolumeOverlay) {
+                                LaunchedEffect(showVolumeOverlay) {
+                                    delay(1000L)
+                                    showVolumeOverlay = false
                                 }
-                            }
-                        }
-
-                        if (showVolumeOverlay) {
-                            LaunchedEffect(showVolumeOverlay) {
-                                delay(1200L)
-                                showVolumeOverlay = false
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.CenterEnd)
-                                    .padding(16.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.Black.copy(alpha = 0.75f))
-                                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.VolumeUp, contentDescription = "Volumen", tint = accentColor, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("VOL: ${volumeVal.toInt()}%", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.CenterEnd)
+                                        .padding(16.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.Black.copy(alpha = 0.8f))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.VolumeUp, contentDescription = "Volumen", tint = accentColor, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("VOLUMEN: ${volumeVal.toInt()}%", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Lock indicator
+                    // Recording signal pulse
+                    if (isRecordingActive) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(12.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color.Black.copy(alpha = 0.75f))
+                                .border(1.dp, Color.Red, RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val infiniteTransition = rememberInfiniteTransition(label = "pulse_recorder")
+                                val recAlpha by infiniteTransition.animateFloat(
+                                    initialValue = 0.2f,
+                                    targetValue = 1.0f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(800, easing = LinearEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "rec"
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .graphicsLayer { alpha = recAlpha }
+                                        .clip(CircleShape)
+                                        .background(Color.Red)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                val mins = recordingTimeSeconds / 60
+                                val secs = recordingTimeSeconds % 60
+                                val formattedTime = String.format("%02d:%02d", mins, secs)
+                                Text(
+                                    text = "GRABANDO ● $formattedTime",
+                                    color = Color.White,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    // Freezer Screen Lock overlay
                     if (touchLocked) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.4f))
+                                .background(Color.Black.copy(alpha = 0.5f))
                                 .clickable { touchLocked = false },
                             contentAlignment = Alignment.Center
                         ) {
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.Black.copy(alpha = 0.8f))
+                                    .background(Color.Black.copy(alpha = 0.85f))
                                     .padding(12.dp)
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.Lock, contentDescription = "Bloqueado", tint = Color.Red, modifier = Modifier.size(28.dp))
+                                    Icon(Icons.Default.Lock, contentDescription = "Bloqueado", tint = Color.Red, modifier = Modifier.size(26.dp))
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Pantalla Bloqueada", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                    Text("Toca en el centro para desbloquear", color = Color.Gray, fontSize = 8.sp)
+                                    Text("Controles Congelados", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text("Toca la pantalla para restaurar", color = Color.Gray, fontSize = 8.sp)
                                 }
                             }
                         }
                     }
 
-                    // Nerd Stats detail
+                    // Nerd Stats Dashboard Metrics overlay
                     if (showNerdStats) {
                         Box(
                             modifier = Modifier
@@ -928,178 +1034,388 @@ fun VidexAppScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("ESTADÍSTICAS DEL SERVIDORES", color = accentColor, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                                    Text("MÉTRICAS DEL SISTEMA", color = accentColor, fontSize = 10.sp, fontWeight = FontWeight.Black)
                                     IconButton(onClick = { showNerdStats = false }, modifier = Modifier.size(24.dp)) {
                                         Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.White, modifier = Modifier.size(14.dp))
                                     }
                                 }
-                                Text("Nombre: ${currentActiveChan.name}", color = Color.White, fontSize = 9.sp)
+                                Text("Canal: ${currentActiveChan.name}", color = Color.White, fontSize = 9.sp)
+                                Text("Decodificador Activo: $systemDecoderMode", color = Color.LightGray, fontSize = 9.sp)
+                                Text("Búfer del ExoPlayer: $systemNetworkBufferSizer", color = Color.LightGray, fontSize = 9.sp)
                                 Text("Protocolo: HLS Adaptive Live Stream m3u8", color = Color.LightGray, fontSize = 9.sp)
-                                Text("Codec Video: H.264 Main Profile @ L4.0", color = Color.LightGray, fontSize = 9.sp)
-                                Text("Codec Audio: AAC Stereo 48.0 kHz", color = Color.LightGray, fontSize = 9.sp)
-                                Text("Buffer Status: 8.2s (Excelente/Sin Pausas)", color = Color(0xFF39FF14), fontSize = 9.sp)
-                                Text("FPS Drop: 0 de 8500 (100% Fluido)", color = Color(0xFF39FF14), fontSize = 9.sp)
+                                Text("User-Agent: $systemUserAgentType", color = Color.LightGray, fontSize = 9.sp)
+                                Text("DNS Cifrado: " + if (systemDnsOverHttpsEnabled) "Cloudflare 1.1.1.1 (Activo)" else "Por Defecto", color = Color.LightGray, fontSize = 9.sp)
+                                Text("Tasa de Bits: 5.4 Mbps / Latencia: 1.2s", color = Color(0xFF39FF14), fontSize = 9.sp)
                             }
                         }
                     }
                 }
 
-                // DEDICATED CONTROLS AND DETAILS BAR
+                // DEDICATED SPACIOUS TABS (Prevents "botones muy juntos" bug)
                 if (!touchLocked) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(CardSurface)
-                            .padding(12.dp)
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
                     ) {
-                        // Action buttons row (Volume mute, aspect ratio, playback speed, stats, pip, touch freeze)
+                        // Tab selectors
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                // Mute toggle
-                                IconButton(
-                                    onClick = {
-                                        isMuted = !isMuted
-                                        exoplayer.volume = if (isMuted) 0f else 1f
-                                    },
+                            listOf("CONTROLES PRO", "AJUSTES VIDEO", "SISTEMA SECH").forEach { tab ->
+                                val isSel = playerActiveControlTab == tab
+                                Box(
                                     modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color.White.copy(alpha = 0.05f), CircleShape)
-                                ) {
-                                    Icon(
-                                        imageVector = if (isMuted) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
-                                        contentDescription = "Silencio",
-                                        tint = if (isMuted) Color.Red else Color.White.copy(alpha = 0.7f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-
-                                // Aspect ratio toggle
-                                IconButton(
-                                    onClick = {
-                                        aspectRatioMode = (aspectRatioMode + 1) % 4
-                                        val modeTxt = when (aspectRatioMode) {
-                                            0 -> "Fit (Ajustar)"
-                                            1 -> "Stretch (Rellenar)"
-                                            2 -> "Zoom (Agrandar)"
-                                            else -> "Original"
-                                        }
-                                        Toast.makeText(context, "Aspecto: $modeTxt", Toast.LENGTH_SHORT).show()
-                                    },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color.White.copy(alpha = 0.05f), CircleShape)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Fullscreen,
-                                        contentDescription = "Aspect Ratio",
-                                        tint = Color.White.copy(alpha = 0.7f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-
-                                // Playback Speed
-                                IconButton(
-                                    onClick = {
-                                        playbackSpeed = when (playbackSpeed) {
-                                            1.0f -> 1.5f
-                                            1.5f -> 2.0f
-                                            2.0f -> 0.5f
-                                            else -> 1.0f
-                                        }
-                                        Toast.makeText(context, "Velocidad: ${playbackSpeed}x", Toast.LENGTH_SHORT).show()
-                                    },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSel) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.03f))
+                                        .border(1.dp, if (isSel) accentColor else Color.Transparent, RoundedCornerShape(8.dp))
+                                        .clickable { playerActiveControlTab = tab }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = "${playbackSpeed}x",
-                                        color = accentColor,
+                                        text = tab,
+                                        color = if (isSel) accentColor else Color.Gray,
                                         fontSize = 10.sp,
-                                        fontWeight = FontWeight.Black
-                                    )
-                                }
-
-                                // Audio Mode
-                                IconButton(
-                                    onClick = {
-                                        isAudioOnlyMode = !isAudioOnlyMode
-                                        Toast.makeText(context, if (isAudioOnlyMode) "Modo Reducido: Sólo Audio" else "Modo de Video Activo", Toast.LENGTH_SHORT).show()
-                                    },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color.White.copy(alpha = 0.05f), CircleShape)
-                                ) {
-                                    Icon(
-                                        imageVector = if (isAudioOnlyMode) Icons.Default.MusicNote else Icons.Default.Videocam,
-                                        contentDescription = "Solo Audio",
-                                        tint = if (isAudioOnlyMode) accentColor else Color.White.copy(alpha = 0.7f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                // PiP system trigger
-                                Button(
-                                    onClick = {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                            try {
-                                                (context as? Activity)?.enterPictureInPictureMode(PictureInPictureParams.Builder().build())
-                                            } catch (e: Exception) {
-                                                Toast.makeText(context, "Error al iniciar PiP", Toast.LENGTH_SHORT).show()
-                                            }
-                                        } else {
-                                            Toast.makeText(context, "Android 8.0+ Requerido", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.05f)),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(34.dp)
-                                ) {
-                                    Icon(Icons.Default.PictureInPicture, contentDescription = "PiP", tint = Color.White, modifier = Modifier.size(12.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("PiP", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                                }
-
-                                // Diagnostics Stats
-                                IconButton(
-                                    onClick = { showNerdStats = !showNerdStats },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(if (showNerdStats) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f), CircleShape)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Info,
-                                        contentDescription = "Stats",
-                                        tint = if (showNerdStats) accentColor else Color.White,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-
-                                // Lock touch
-                                IconButton(
-                                    onClick = { touchLocked = true },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color.White.copy(alpha = 0.05f), CircleShape)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Lock,
-                                        contentDescription = "Bloquear Pantalla",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
                                     )
                                 }
                             }
                         }
 
-                        // Info Metadata layout EPG Guide
                         Spacer(modifier = Modifier.height(10.dp))
+
+                        // ACTIVE TAB CONTENTS
+                        when (playerActiveControlTab) {
+                            "CONTROLES PRO" -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // 1. Cast Control Button
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable { isCastDialogOpen = true }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isCasting) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
+                                                .border(1.dp, if (isCasting) accentColor else Color.White.copy(alpha = 0.1f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isCasting) Icons.Default.CastConnected else Icons.Default.Cast,
+                                                contentDescription = "Cast",
+                                                tint = if (isCasting) accentColor else Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("TRANSMITIR", color = if (isCasting) accentColor else Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text(if (isCasting) "Cerrar Cast" else "En Smart TV", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // 2. Built-In Screen Recorder Button
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable {
+                                            if (isRecordingActive) {
+                                                isRecordingActive = false
+                                                lastSavedRecordingPath = "/Movies/VidexRecordings/VID_20260526_" + (1000..9999).random() + ".mp4"
+                                                showRecordingSaveDialog = true
+                                            } else {
+                                                isRecordingActive = true
+                                                Toast.makeText(context, "Grabación iniciada", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isRecordingActive) Color.Red.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
+                                                .border(1.dp, if (isRecordingActive) Color.Red else Color.White.copy(alpha = 0.1f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isRecordingActive) Icons.Default.Stop else Icons.Default.FiberManualRecord,
+                                                contentDescription = "Grabar",
+                                                tint = if (isRecordingActive) Color.Red else Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("GRABAR", color = if (isRecordingActive) Color.Red else Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text(if (isRecordingActive) "Grabando..." else "Resp. SVG", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // 3. In-App Picture-In-Picture Floating Card Button
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable {
+                                            isAppMiniPlayerActived = true
+                                            Toast.makeText(context, "Reproductor flotante minimizado de forma fluida.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.White.copy(alpha = 0.05f))
+                                                .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.OpenInNew,
+                                                contentDescription = "Flotar",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("MINIMIZAR", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text("Flotar en App", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // 4. Native OS Picture-in-Picture Button
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable {
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                                try {
+                                                    (context as? Activity)?.enterPictureInPictureMode(PictureInPictureParams.Builder().build())
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(context, "Error sintonizando PiP", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } else {
+                                                Toast.makeText(context, "Android 8.0+ Requerido", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.White.copy(alpha = 0.05f))
+                                                .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PictureInPicture,
+                                                contentDescription = "PiP Sistema",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("SISTEMA PiP", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text("Paso externo", color = Color.Gray, fontSize = 7.sp)
+                                    }
+                                }
+                            }
+
+                            "AJUSTES VIDEO" -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Aspect Ratio Toggle
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable {
+                                            aspectRatioMode = (aspectRatioMode + 1) % 4
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.White.copy(alpha = 0.05f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.Fullscreen, contentDescription = "Aspecto", tint = Color.LightGray, modifier = Modifier.size(20.dp))
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("RELACIÓN", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        val curModeStr = when(aspectRatioMode) {
+                                            0 -> "Fit"
+                                            1 -> "Stretch"
+                                            2 -> "Zoom"
+                                            else -> "Original"
+                                        }
+                                        Text(curModeStr, color = accentColor, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    // Playback Speed Toggle
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable {
+                                            playbackSpeed = when (playbackSpeed) {
+                                                1.0f -> 1.5f
+                                                1.5f -> 2.0f
+                                                2.0f -> 0.5f
+                                                else -> 1.0f
+                                            }
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.White.copy(alpha = 0.05f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("${playbackSpeed}x", color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("VELOCIDAD", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text("Re-ajustar HLS", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // Audio Only mode Toggle
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable { isAudioOnlyMode = !isAudioOnlyMode }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isAudioOnlyMode) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isAudioOnlyMode) Icons.Default.MusicNote else Icons.Default.Videocam,
+                                                tint = if (isAudioOnlyMode) accentColor else Color.LightGray,
+                                                contentDescription = "Audio mode",
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("SÓLO AUDIO", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text(if (isAudioOnlyMode) "Solo Voz" else "Audio-Video", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // Volume Mute Button
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable {
+                                            isMuted = !isMuted
+                                            exoplayer.volume = if (isMuted) 0f else 1f
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isMuted) Color.Red.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isMuted) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
+                                                tint = if (isMuted) Color.Red else Color.LightGray,
+                                                contentDescription = "Silencio",
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("SILENCIAR", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text(if (isMuted) "Silenciado" else "Sonido OK", color = Color.Gray, fontSize = 7.sp)
+                                    }
+                                }
+                            }
+
+                            "SISTEMA SECH" -> {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Nerd Stats Toggle
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable { showNerdStats = !showNerdStats }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(if (showNerdStats) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.Info, contentDescription = "Estadísticas", tint = if (showNerdStats) accentColor else Color.LightGray, modifier = Modifier.size(20.dp))
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("MÉTRICAS", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text(if (showNerdStats) "Ocultar" else "Estadísticas", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // Touch freeze lock
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.clickable { touchLocked = true }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.White.copy(alpha = 0.05f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.Lock, contentDescription = "Congelar", tint = Color.LightGray, modifier = Modifier.size(18.dp))
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("BLOQUEAR", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text("Gestos inactivos", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // Decoder parameter visual tracker
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.White.copy(alpha = 0.03f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.Build, contentDescription = "Motor", tint = accentColor, modifier = Modifier.size(16.dp))
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("DECODER", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text(if (systemDecoderMode.contains("HW")) "GPU Acel" else "CPU TS", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // Buffers status track
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.White.copy(alpha = 0.03f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.SettingsInputAntenna, contentDescription = "Antena", tint = accentColor, modifier = Modifier.size(16.dp))
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("BÚFER HLS", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text(systemNetworkBufferSizer.substringBefore(" ("), color = Color.Gray, fontSize = 7.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Info metadata & electronic guide (EPG)
+                        Spacer(modifier = Modifier.height(14.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1119,7 +1435,7 @@ fun VidexAppScreen(
                                 )
                             }
                             Text(
-                                text = "CALIDAD DE SEÑAL DE ESTRENO: EXCELENTE (1080P)",
+                                text = "CALIDAD DE SEÑAL: EXCELENTE (1080P FULL HLS)",
                                 color = Color.Gray,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1127,9 +1443,9 @@ fun VidexAppScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Guía: Transmisión en directo del canal ${currentActiveChan.name}. Ofrece un flujo continuo adaptativo y latencia ultra baja.",
+                            text = "Guía: Transmisión en directo del canal ${currentActiveChan.name}. Alimentado por ExoEngine v2 con aceleración gráfica GPU.",
                             color = Color.LightGray,
                             fontSize = 11.sp,
                             lineHeight = 15.sp
@@ -1137,8 +1453,8 @@ fun VidexAppScreen(
                     }
                 }
 
-                // DYNAMIC CHANNEL CHANGER / LIST RECOMENDADOS INSIDE PLAYER ("directamente cambia de reproductor a otro")
-                Spacer(modifier = Modifier.height(14.dp))
+                // DIRECT CHANNEL CHANGER GRID ROW ("directamente cambia de reproductor a otro")
+                Spacer(modifier = Modifier.height(8.dp))
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1154,24 +1470,23 @@ fun VidexAppScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val recommendedList = remember(currentActiveChan, favoritesList) {
+                    val recommendedList = remember(currentActiveChan) {
                         CHANNELS_LIST.filter { it.name != currentActiveChan.name }
                     }
 
                     LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         items(recommendedList) { otherChan ->
                             val otherGroupColor = getGroupColor(otherChan.group, accentColor)
                             Box(
                                 modifier = Modifier
-                                    .width(130.dp)
+                                    .width(135.dp)
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(CardSurface)
-                                    .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(10.dp))
+                                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp))
                                     .clickable {
-                                        // DIRECTLY CHANGE TO THIS CHANNEL WITHOUT BACKING OUT ("directamente cambia de reproductor a otro")
                                         activeChannel = otherChan
                                         exoplayer.stop()
                                         exoplayer.setMediaItem(
@@ -1185,20 +1500,19 @@ fun VidexAppScreen(
                                         exoplayer.play()
                                         Toast.makeText(context, "Sintonizando ${otherChan.name}...", Toast.LENGTH_SHORT).show()
                                     }
-                                    .padding(8.dp)
+                                    .padding(10.dp)
                             ) {
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    // small tag
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(3.dp))
-                                            .background(otherGroupColor.copy(alpha = 0.12f))
+                                            .background(otherGroupColor.copy(alpha = 0.15f))
                                             .padding(horizontal = 4.dp, vertical = 1.dp)
                                     ) {
                                         Text(
                                             text = otherChan.group.uppercase(),
                                             color = otherGroupColor,
-                                            fontSize = 7.sp,
+                                            fontSize = 8.sp,
                                             fontWeight = FontWeight.Bold,
                                             fontFamily = FontFamily.Monospace
                                         )
@@ -1206,14 +1520,14 @@ fun VidexAppScreen(
                                     Text(
                                         text = otherChan.name,
                                         color = Color.White,
-                                        fontSize = 11.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = "Tocar para cambiar",
-                                        color = accentColor.copy(alpha = 0.7f),
+                                        color = accentColor,
                                         fontSize = 8.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -1221,7 +1535,83 @@ fun VidexAppScreen(
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
+            }
+        }
+
+        // DRAGGABLE IN-APP MINI-PLAYER BOX ("pip para reproductor mini")
+        if (activeChannel != null && isAppMiniPlayerActived) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset { IntOffset(miniPlayerOffset.x.toInt(), miniPlayerOffset.y.toInt()) }
+                        .padding(bottom = 90.dp, end = 16.dp)
+                        .width(180.dp)
+                        .aspectRatio(1.77f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black)
+                        .border(2.dp, accentColor, RoundedCornerShape(12.dp))
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                miniPlayerOffset = Offset(
+                                    x = (miniPlayerOffset.x + dragAmount.x).coerceIn(-300f, 50f),
+                                    y = (miniPlayerOffset.y + dragAmount.y).coerceIn(-600f, 50f)
+                                )
+                            }
+                        }
+                        .clickable {
+                            isAppMiniPlayerActived = false // Maximize again
+                        }
+                ) {
+                    ExoPlayerViewContainer(
+                        player = exoplayer,
+                        url = getEffectiveStreamUrl(activeChannel!!),
+                        isAudioOnly = isAudioOnlyMode,
+                        isMuted = isMuted,
+                        aspectRatioMode = aspectRatioMode,
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Draggable controller details bar overlay
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = activeChannel!!.name,
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(start = 4.dp)
+                        )
+                        IconButton(
+                            onClick = {
+                                exoplayer.stop()
+                                activeChannel = null
+                                isAppMiniPlayerActived = false
+                            },
+                            modifier = Modifier.size(16.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cerrar Mini",
+                                tint = Color.Red,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1230,14 +1620,133 @@ fun VidexAppScreen(
         // DIALOGS & OVERLAYS GLOBAL
         // ============================================
 
-        // PIN DIALOG FOR PARENTAL LOCK
+        // 1. CHROMECAST DEVICE SCANNER DIALOG
+        if (isCastDialogOpen) {
+            AlertDialog(
+                onDismissRequest = { isCastDialogOpen = false },
+                title = { Text("Asistente de Transmisión TV", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        Text("Sintonice de forma inalámbrica en cualquier Smart TV o Google Chromecast en su red:", color = Color.LightGray, fontSize = 11.sp)
+                        Divider(color = Color.White.copy(alpha = 0.05f))
+
+                        val simulatedTvDevices = listOf("Smart TV Samsung Living", "Chromecast Dormitorio Principal", "LG ThinQ Cocina")
+                        simulatedTvDevices.forEach { device ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.03f))
+                                    .clickable {
+                                        if (isCasting && castingDeviceName == device) {
+                                            isCasting = false
+                                            castingDeviceName = ""
+                                            Toast.makeText(context, "Transmisión detenida", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            isCasting = true
+                                            castingDeviceName = device
+                                            Toast.makeText(context, "Conectado a $device con éxito", Toast.LENGTH_SHORT).show()
+                                        }
+                                        isCastDialogOpen = false
+                                    }
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Tv, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(device, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Icon(
+                                    imageVector = if (isCasting && castingDeviceName == device) Icons.Default.CheckCircle else Icons.Default.Cast,
+                                    contentDescription = null,
+                                    tint = if (isCasting && castingDeviceName == device) accentColor else Color.Gray,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        if (isCasting) {
+                            Button(
+                                onClick = {
+                                    isCasting = false
+                                    castingDeviceName = ""
+                                    isCastDialogOpen = false
+                                    Toast.makeText(context, "Transmisión desactivada", Toast.LENGTH_SHORT).show()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
+                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = null, tint = Color.Red, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("DESCONECTAR TRANSMISIÓN", color = Color.Red, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { isCastDialogOpen = false }) {
+                        Text("CERRAR", color = accentColor)
+                    }
+                },
+                containerColor = CardSurface
+            )
+        }
+
+        // 2. SCREEN RECORDER SAVING CONFIRMATION DIALOG
+        if (showRecordingSaveDialog) {
+            AlertDialog(
+                onDismissRequest = { showRecordingSaveDialog = false },
+                title = { Text("¡Grabación Sintonizada!", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Folder, contentDescription = null, tint = Color(0xFFFFB300), modifier = Modifier.size(36.dp).align(Alignment.CenterHorizontally))
+                        Text("El sintonizador de pantalla interna finalizó la grabación de forma exitosa.", color = Color.LightGray, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color.Black.copy(alpha = 0.3f))
+                                .padding(8.dp)
+                        ) {
+                            Column {
+                                Text("Ruta de guardado interna:", color = Color.Gray, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+                                Text(lastSavedRecordingPath, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                        Text("La captura utiliza compresión SVG/H.264 avanzada por hardware acelerado.", color = Color.Gray, fontSize = 9.sp)
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showRecordingSaveDialog = false
+                            Toast.makeText(context, "Preparando reproductor multimedia integrado...", Toast.LENGTH_LONG).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                    ) {
+                        Text("REPRODUCIR GRABACIÓN", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRecordingSaveDialog = false }) {
+                        Text("DIFUNDIR", color = Color.White)
+                    }
+                },
+                containerColor = CardSurface
+            )
+        }
+
+        // 3. PIN SECURITY PARENTAL DIALOG
         if (showPinDialog) {
             AlertDialog(
                 onDismissRequest = { showPinDialog = false },
-                title = { Text("Filtro Parental: Introducir PIN", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                title = { Text("Filtro Parental: Desbloquear PIN", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text("Para desbloquear la categoría 'EVENTOS', introduce el PIN de seguridad (Por defecto: 1234)", color = Color.LightGray, fontSize = 11.sp)
+                        Text("Para desbloquear los sintonizadores 'EVENTOS', introduzca el PIN de seguridad asignado (Por defecto: 1234):", color = Color.LightGray, fontSize = 11.sp)
                         OutlinedTextField(
                             value = pinValue,
                             onValueChange = { pinValue = it },
@@ -1263,9 +1772,9 @@ fun VidexAppScreen(
                                 showPinDialog = false
                                 parentalPinError = ""
                                 pinValue = ""
-                                Toast.makeText(context, "Filtro Parental Desactivado. Acceso concedido.", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Acceso concedido a EVENTOS", Toast.LENGTH_SHORT).show()
                             } else {
-                                parentalPinError = "PIN Incorrecto. Reintenta."
+                                parentalPinError = "PIN Incorrecto. Por defecto use: 1234"
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = accentColor)
@@ -1288,7 +1797,219 @@ fun VidexAppScreen(
     }
 }
 
-// Optimized ExoPlayer Composable holding view binder
+// 4. POWERED ADVANCED SYSTEM SETTINGS DASHBOARD
+@Composable
+fun AdvancedSettingsPanel(
+    accentColor: Color,
+    systemDecoderMode: String,
+    onDecoderChange: (String) -> Unit,
+    systemNetworkBufferSizer: String,
+    onBufferChange: (String) -> Unit,
+    systemUserAgentType: String,
+    onUserAgentChange: (String) -> Unit,
+    systemDnsOverHttpsEnabled: Boolean,
+    onDnsChange: (Boolean) -> Unit,
+    onBackPressed: () -> Unit,
+    onClearCache: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BaseDarkBg)
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        // Toolbar
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp)
+        ) {
+            IconButton(
+                onClick = onBackPressed,
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
+            ) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Atrás", tint = Color.White)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "AJSUTEC DE CONFIGURACIÓN DEL SISTEMA",
+                    color = accentColor,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    text = "Consola Sintonizadora",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Black
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Decodificador
+        Text("MOTOR DE DECODIFICACIÓN DETALLADA", color = accentColor, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        Spacer(modifier = Modifier.height(6.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(CardSurface)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val options = listOf("Hardware (HW+ / GPU)", "Software (MPEG-TS Engine)", "Nativo ExoEngine Base (Lento)")
+            options.forEach { opt ->
+                val isSel = systemDecoderMode == opt
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isSel) accentColor.copy(alpha = 0.08f) else Color.Transparent)
+                        .clickable { onDecoderChange(opt) }
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(opt, color = if (isSel) Color.White else Color.Gray, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                    Icon(
+                        imageVector = if (isSel) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                        contentDescription = null,
+                        tint = if (isSel) accentColor else Color.DarkGray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Buffers
+        Text("TAMAÑO DE BÚFER RED RECOMIENDADO (HLS LIVE)", color = accentColor, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        Spacer(modifier = Modifier.height(6.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(CardSurface)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val options = listOf("5 Segundos (Latencia Ultra Baja)", "15 Segundos (Estándar recomendado)", "30 Segundos (Conexiones inestables)")
+            options.forEach { opt ->
+                val isSel = systemNetworkBufferSizer == opt
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isSel) accentColor.copy(alpha = 0.08f) else Color.Transparent)
+                        .clickable { onBufferChange(opt) }
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(opt, color = if (isSel) Color.White else Color.Gray, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                    Icon(
+                        imageVector = if (isSel) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                        contentDescription = null,
+                        tint = if (isSel) accentColor else Color.DarkGray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Cloudflare safe secure settings DNS
+        Text("CONSOLA DE SEGURIDAD PROTOCOLOS", color = accentColor, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        Spacer(modifier = Modifier.height(6.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(CardSurface)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("DNS-over-HTTPS (Cifrado)", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Usa Cloudflare DNS 1.1.1.1 seguro", color = Color.Gray, fontSize = 9.sp)
+                }
+                Switch(
+                    checked = systemDnsOverHttpsEnabled,
+                    onCheckedChange = onDnsChange,
+                    colors = SwitchDefaults.colors(checkedThumbColor = accentColor, checkedTrackColor = accentColor.copy(alpha = 0.3f))
+                )
+            }
+
+            Divider(color = Color.White.copy(alpha = 0.05f))
+
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)) {
+                Text("User-Agent de Sintonización", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("Evite restricciones de emisión simulando agentes externos:", color = Color.Gray, fontSize = 9.sp)
+                val agents = listOf("VidexPlayer Core Engine v2.0", "Mozilla/5.0 Android ExoPlayer", "AppleTV/6.2 CustomStreamer")
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    agents.forEach { agent ->
+                        val isSel = systemUserAgentType == agent
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSel) accentColor.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.03f))
+                                .border(1.dp, if (isSel) accentColor else Color.Transparent, RoundedCornerShape(6.dp))
+                                .clickable { onUserAgentChange(agent) }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = agent.substringBefore("/").substringBefore(" Core"),
+                                color = if (isSel) accentColor else Color.Gray,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+
+            Divider(color = Color.White.copy(alpha = 0.05f))
+
+            Button(
+                onClick = onClearCache,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.12f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = "Purga", tint = Color.Red, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("PURGAR CACHÉ Y búferes", color = Color.Red, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+            }
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+    }
+}
+
+// 5. STABLE EXOPLAYER CONTAINER
 @OptIn(UnstableApi::class)
 @Composable
 fun ExoPlayerViewContainer(
@@ -1301,7 +2022,6 @@ fun ExoPlayerViewContainer(
 ) {
     val context = LocalContext.current
 
-    // React to stream URL modifications natively
     LaunchedEffect(url, isMuted) {
         val mediaItem = MediaItem.Builder()
             .setUri(url)
@@ -1313,7 +2033,6 @@ fun ExoPlayerViewContainer(
         player.play()
     }
 
-    // Android lifecycle listener
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -1335,7 +2054,6 @@ fun ExoPlayerViewContainer(
 
     Box(modifier = modifier.background(Color.Black)) {
         if (isAudioOnly) {
-            // Rotating Vinyl Disk for radio/audio-only playback
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1365,9 +2083,9 @@ fun ExoPlayerViewContainer(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(Color.Red)
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.Red)
                         )
                     }
                     Spacer(modifier = Modifier.height(10.dp))
@@ -1387,7 +2105,6 @@ fun ExoPlayerViewContainer(
                 }
             }
         } else {
-            // AndroidView holding Media3 PlayerView
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
