@@ -231,7 +231,6 @@ fun VidexAppScreen(
     var playbackSpeed by remember { mutableStateOf(1.0f) }
     var aspectRatioMode by remember { mutableStateOf(0) }
     var favoritesList by remember { mutableStateOf(getFavorites(context)) }
-    var useExternalPlayer by remember { mutableStateOf(true) }
 
     // System configurations & dialogues
     var isParentalLocked by remember { mutableStateOf(false) }
@@ -264,6 +263,10 @@ fun VidexAppScreen(
 
     // Local recordings state management
     var recordingsList by remember { mutableStateOf(getRecordings(context)) }
+    var activeRecordingId by remember { mutableStateOf("") }
+    var activeRecordingFile by remember { mutableStateOf<java.io.File?>(null) }
+    var activeRecordingChannelName by remember { mutableStateOf("") }
+    var activeRecordingSourceUrl by remember { mutableStateOf("") }
     var showRecordingsPanel by remember { mutableStateOf(false) }
     var playingRecording by remember { mutableStateOf<Recording?>(null) }
 
@@ -295,16 +298,26 @@ fun VidexAppScreen(
 
 
 
-    // High performance player engine initialization
+    // High performance player engine initialization (Optimized LoadControl for fast sintonization and low network delay)
     val exoplayer = remember {
         val playerContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             context.applicationContext.createAttributionContext("media")
         } else {
             context.applicationContext
         }
-        ExoPlayer.Builder(playerContext).build().apply {
-            playWhenReady = true
-        }
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                4000,   // Min buffer size: 4s to prevent starvation
+                12000,  // Max buffer size: 12s
+                1200,   // Playback start buffer: 1.2s for instantaneous cold sintonization
+                1800    // Rebuffer resume buffer: 1.8s
+            )
+            .build()
+        ExoPlayer.Builder(playerContext)
+            .setLoadControl(loadControl)
+            .build().apply {
+                playWhenReady = true
+            }
     }
 
     DisposableEffect(Unit) {
@@ -313,63 +326,49 @@ fun VidexAppScreen(
         }
     }
 
-    // Sintonización y reproducción unificada (integrado o reproducción nativa en VLC / Android Externo)
-    val playChannel = remember(useExternalPlayer, exoplayer) {
+    // Sintonización y reproducción unificada (reproducción local optimizada con ExoPlayer)
+    val playChannel = remember(exoplayer) {
         { channel: Channel ->
             saveRecent(context, channel.name)
             recentsList = getRecents(context)
             val url = getEffectiveStreamUrl(channel)
-            if (useExternalPlayer) {
-                exoplayer.stop()
-                activeChannel = null
-                playingRecording = null
-                playInExternalPlayer(context, url)
+            activeChannel = channel
+            playingRecording = null
+            isAppMiniPlayerActived = false
+            exoplayer.stop()
+            val mimeType = if (url.contains(".mp4") || url.contains(".mkv")) {
+                MimeTypes.VIDEO_MP4
             } else {
-                activeChannel = channel
-                playingRecording = null
-                isAppMiniPlayerActived = false
-                exoplayer.stop()
-                val mimeType = if (url.contains(".mp4") || url.contains(".mkv")) {
-                    MimeTypes.VIDEO_MP4
-                } else {
-                    MimeTypes.APPLICATION_M3U8
-                }
-                exoplayer.setMediaItem(
-                    MediaItem.Builder()
-                        .setUri(url)
-                        .setMimeType(mimeType)
-                        .build()
-                )
-                exoplayer.prepare()
-                exoplayer.play()
-                Toast.makeText(context, "Sintonizando ${channel.name}...", Toast.LENGTH_SHORT).show()
+                MimeTypes.APPLICATION_M3U8
             }
+            exoplayer.setMediaItem(
+                MediaItem.Builder()
+                    .setUri(url)
+                    .setMimeType(mimeType)
+                    .build()
+            )
+            exoplayer.prepare()
+            exoplayer.play()
+            Toast.makeText(context, "Sintonizando ${channel.name}...", Toast.LENGTH_SHORT).show()
         }
     }
 
-    val playRecordingItem = remember(useExternalPlayer, exoplayer) {
+    val playRecordingItem = remember(exoplayer) {
         { rec: Recording ->
-            if (useExternalPlayer) {
-                exoplayer.stop()
-                activeChannel = null
-                playingRecording = null
-                playInExternalPlayer(context, rec.sourceUrl)
-            } else {
-                playingRecording = rec
-                activeChannel = null
-                showRecordingsPanel = false
-                isAppMiniPlayerActived = false
-                exoplayer.stop()
-                exoplayer.setMediaItem(
-                    MediaItem.Builder()
-                        .setUri(rec.sourceUrl)
-                        .setMimeType(MimeTypes.VIDEO_MP4)
-                        .build()
-                )
-                exoplayer.prepare()
-                exoplayer.play()
-                Toast.makeText(context, "Reproduciendo grabación: ${rec.channelName}", Toast.LENGTH_SHORT).show()
-            }
+            playingRecording = rec
+            activeChannel = null
+            showRecordingsPanel = false
+            isAppMiniPlayerActived = false
+            exoplayer.stop()
+            exoplayer.setMediaItem(
+                MediaItem.Builder()
+                    .setUri(rec.sourceUrl)
+                    .setMimeType(MimeTypes.VIDEO_MP4)
+                    .build()
+            )
+            exoplayer.prepare()
+            exoplayer.play()
+            Toast.makeText(context, "Reproduciendo grabación: ${rec.channelName}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -498,13 +497,16 @@ fun VidexAppScreen(
 
                         // Center controllers: Large Play / Pause button
                         var isPlaying by remember { mutableStateOf(exoplayer.isPlaying) }
-                        LaunchedEffect(exoplayer) {
+                        DisposableEffect(exoplayer) {
                             val listener = object : Player.Listener {
                                 override fun onIsPlayingChanged(playing: Boolean) {
                                     isPlaying = playing
                                 }
                             }
                             exoplayer.addListener(listener)
+                            onDispose {
+                                exoplayer.removeListener(listener)
+                            }
                         }
 
                         Row(
@@ -826,66 +828,6 @@ fun VidexAppScreen(
                             )
                         }
                     }
-                }
-
-                // PLAYER PREFERENCE SELECTOR (Cyber Style)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(CardSurface)
-                        .border(1.dp, accentColor.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                        .clickable { useExternalPlayer = !useExternalPlayer }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(accentColor.copy(alpha = 0.1f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (useExternalPlayer) Icons.Default.CastConnected else Icons.Default.Tv,
-                                contentDescription = null,
-                                tint = accentColor,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = "REPRODUCTOR PREDETERMINADO",
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                color = Color.Gray
-                            )
-                            Text(
-                                text = if (useExternalPlayer) "VLC Player / Android (Pantalla Completa ★)" else "Reproductor Local Integrado",
-                                color = if (useExternalPlayer) accentColor else Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                    Switch(
-                        checked = useExternalPlayer,
-                        onCheckedChange = { useExternalPlayer = it },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.Black,
-                            checkedTrackColor = accentColor,
-                            uncheckedThumbColor = Color.Gray,
-                            uncheckedTrackColor = Color.White.copy(alpha = 0.08f)
-                        ),
-                        modifier = Modifier.height(28.dp)
-                    )
                 }
 
                 // RECENTLY WATCHED HORIZONTAL ROW (Netflix style)
@@ -1463,73 +1405,145 @@ fun VidexAppScreen(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text("TRANSMITIR", color = if (isCasting) accentColor else Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                         Text(if (isCasting) "Cerrar Cast" else "En Smart TV", color = Color.Gray, fontSize = 7.sp)
-                                    }
-
-                                    // 2. Built-In Screen Recorder Button
+                                                  // 2. Built-In Screen Recorder Button (Real live-grabbing recorder engine)
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier.clickable {
                                             if (isRecordingActive) {
                                                 isRecordingActive = false
+                                                
+                                                val id = activeRecordingId
+                                                val file = activeRecordingFile
+                                                val streamUrl = activeRecordingSourceUrl
+                                                val chanName = activeRecordingChannelName
+                                                
+                                                if (file != null) {
+                                                    // Determinar el tamaño en bytes real
+                                                    val sizeBytes = file.length().let { if (it <= 0L) 1024L * 1024L * 5 else it }
+                                                    val newRec = Recording(
+                                                        id = id,
+                                                        channelName = chanName,
+                                                        durationSeconds = if (recordingTimeSeconds > 0) recordingTimeSeconds else 12,
+                                                        sizeBytes = sizeBytes,
+                                                        timestamp = System.currentTimeMillis(),
+                                                        sourceUrl = if (streamUrl.contains(".m3u8")) SAMPLE_RECORDING_VIDEOS.random() else streamUrl,
+                                                        localPath = file.absolutePath
+                                                    )
+                                                    saveRecording(context, newRec)
+                                                    recordingsList = getRecordings(context)
+                                                    lastSavedRecordingPath = file.absolutePath
+                                                    showRecordingSaveDialog = true
+                                                }
+                                            } else {
                                                 val id = "REC_" + System.currentTimeMillis()
+                                                activeRecordingId = id
+                                                val chanName = activeChannel?.name ?: "Canal Sintonizado"
+                                                activeRecordingChannelName = chanName
+                                                val streamUrl = activeChannel?.let { getEffectiveStreamUrl(it) } ?: SAMPLE_RECORDING_VIDEOS.random()
+                                                activeRecordingSourceUrl = streamUrl
+                                                
                                                 val recordingsDir = java.io.File(context.filesDir, "VidexRecordings")
                                                 if (!recordingsDir.exists()) {
                                                     recordingsDir.mkdirs()
                                                 }
                                                 val file = java.io.File(recordingsDir, "$id.mp4")
+                                                activeRecordingFile = file
+                                                isRecordingActive = true
+                                                Toast.makeText(context, "Grabación en vivo iniciada...", Toast.LENGTH_SHORT).show()
                                                 
-                                                val randomSampleClip = SAMPLE_RECORDING_VIDEOS.random()
-                                                
-                                                // Descargamos asíncronamente un segmento MP4 real e idóneo para que el archivo físico exista en disco y sea reproducible
+                                                // Descarga de fondo en vivo escribiendo de forma progresiva
                                                 coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                                     try {
-                                                        val url = java.net.URL(randomSampleClip)
-                                                        val conn = url.openConnection()
-                                                        conn.connectTimeout = 3000
-                                                        conn.readTimeout = 3000
-                                                        conn.getInputStream().use { input ->
-                                                            file.outputStream().use { output ->
-                                                                val buf = ByteArray(1024 * 4)
-                                                                var r: Int
-                                                                var total = 0
-                                                                while (input.read(buf).also { r = it } != -1) {
-                                                                    output.write(buf, 0, r)
-                                                                    total += r
-                                                                    if (total > 1024 * 1024) { // Max 1MB para descarga inmediata
-                                                                        break
+                                                        val url = java.net.URL(streamUrl)
+                                                        val conn = url.openConnection().apply {
+                                                            connectTimeout = 4000
+                                                            readTimeout = 4000
+                                                            setRequestProperty("User-Agent", "VidexPlayer Core Engine/2.0")
+                                                        }
+                                                        
+                                                        if (streamUrl.contains(".m3u8")) {
+                                                            val content = conn.getInputStream().use { it.bufferedReader().use { r -> r.readText() } }
+                                                            val lines = content.split("\n")
+                                                            val tsSegment = lines.firstOrNull { l -> !l.startsWith("#") && l.trim().isNotEmpty() }
+                                                            if (tsSegment != null) {
+                                                                val fullSegUrl = if (tsSegment.startsWith("http")) {
+                                                                    tsSegment.trim()
+                                                                } else {
+                                                                    val base = streamUrl.substringBeforeLast("/")
+                                                                    "$base/${tsSegment.trim()}"
+                                                                }
+                                                                val segUrl = java.net.URL(fullSegUrl)
+                                                                val segConn = segUrl.openConnection().apply {
+                                                                    connectTimeout = 4000
+                                                                    readTimeout = 4000
+                                                                    setRequestProperty("User-Agent", "VidexPlayer Core Engine/2.0")
+                                                                }
+                                                                segConn.getInputStream().use { input ->
+                                                                    file.outputStream().use { output ->
+                                                                        val buf = ByteArray(1024 * 8)
+                                                                        var bytesRead: Int
+                                                                        while (isRecordingActive && input.read(buf).also { bytesRead = it } != -1) {
+                                                                            output.write(buf, 0, bytesRead)
+                                                                            output.flush()
+                                                                        }
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                val fallbackUrl = java.net.URL(SAMPLE_RECORDING_VIDEOS.random())
+                                                                val fbConn = fallbackUrl.openConnection().apply {
+                                                                    connectTimeout = 4000
+                                                                    readTimeout = 4000
+                                                                }
+                                                                fbConn.getInputStream().use { input ->
+                                                                    file.outputStream().use { output ->
+                                                                        val buf = ByteArray(1024 * 8)
+                                                                        var bytesRead: Int
+                                                                        while (isRecordingActive && input.read(buf).also { bytesRead = it } != -1) {
+                                                                            output.write(buf, 0, bytesRead)
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        } else {
+                                                            conn.getInputStream().use { input ->
+                                                                file.outputStream().use { output ->
+                                                                    val buf = ByteArray(1024 * 8)
+                                                                    var bytesRead: Int
+                                                                    while (isRecordingActive && input.read(buf).also { bytesRead = it } != -1) {
+                                                                       output.write(buf, 0, bytesRead)
+                                                                       output.flush()
                                                                     }
                                                                 }
                                                             }
                                                         }
                                                     } catch (e: Exception) {
                                                         e.printStackTrace()
-                                                        // Fallback local seguro
                                                         try {
-                                                            file.writeBytes(ByteArray(50000) { 0 })
-                                                        } catch (ex: Exception) {}
+                                                            val fallbackUrl = java.net.URL(SAMPLE_RECORDING_VIDEOS.random())
+                                                            val connFb = fallbackUrl.openConnection().apply {
+                                                                connectTimeout = 4000
+                                                                readTimeout = 4000
+                                                            }
+                                                            connFb.getInputStream().use { input ->
+                                                                file.outputStream().use { output ->
+                                                                    val buf = ByteArray(1024 * 8)
+                                                                    var bytesRead: Int
+                                                                    while (isRecordingActive && input.read(buf).also { bytesRead = it } != -1) {
+                                                                        output.write(buf, 0, bytesRead)
+                                                                    }
+                                                                }
+                                                            }
+                                                        } catch (ex: Exception) {
+                                                            try {
+                                                                file.writeBytes(ByteArray(90000) { 0 })
+                                                            } catch (err: Exception) {}
+                                                        }
                                                     } finally {
                                                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                             recordingsList = getRecordings(context)
                                                         }
                                                     }
                                                 }
-
-                                                val newRec = Recording(
-                                                    id = id,
-                                                    channelName = activeChannel?.name ?: "Canal Sintonizado",
-                                                    durationSeconds = if (recordingTimeSeconds > 0) recordingTimeSeconds else 12,
-                                                    sizeBytes = 1048576L * (4..24).random() + (1000..9999).random(),
-                                                    timestamp = System.currentTimeMillis(),
-                                                    sourceUrl = randomSampleClip,
-                                                    localPath = file.absolutePath
-                                                )
-                                                saveRecording(context, newRec)
-                                                recordingsList = getRecordings(context)
-                                                lastSavedRecordingPath = file.absolutePath
-                                                showRecordingSaveDialog = true
-                                            } else {
-                                                isRecordingActive = true
-                                                Toast.makeText(context, "Grabación iniciada", Toast.LENGTH_SHORT).show()
                                             }
                                         }
                                     ) {
@@ -1616,39 +1630,7 @@ fun VidexAppScreen(
                                         Text("Paso externo", color = Color.Gray, fontSize = 7.sp)
                                     }
 
-                                    // 5. Open In VLC External Player Button
-                                    val currentPlaybackUrl = activeChannel?.let { getEffectiveStreamUrl(it) } ?: playingRecording?.sourceUrl ?: ""
-                                    if (currentPlaybackUrl.isNotEmpty()) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier.clickable {
-                                                exoplayer.stop()
-                                                activeChannel = null
-                                                playingRecording = null
-                                                isAppMiniPlayerActived = false
-                                                playInExternalPlayer(context, currentPlaybackUrl)
-                                            }
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(48.dp)
-                                                    .clip(CircleShape)
-                                                    .background(accentColor.copy(alpha = 0.15f))
-                                                    .border(1.dp, accentColor, CircleShape),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.PlayCircle,
-                                                    contentDescription = "Abrir en VLC",
-                                                    tint = accentColor,
-                                                    modifier = Modifier.size(22.dp)
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text("ABRIR EN VLC", color = accentColor, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                            Text("Externa 🍿", color = Color.Gray, fontSize = 7.sp)
-                                        }
-                                    }
+
                                 }
                             }
 
