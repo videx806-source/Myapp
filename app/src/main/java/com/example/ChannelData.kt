@@ -14,71 +14,71 @@ data class Channel(
 )
 
 object ChannelDataProvider {
-    val CATEGORIES = listOf("Todos", "Deportes", "Cine & Series", "Entretenimiento", "Noticias", "Música")
+    val CATEGORIES = listOf("Todos", "Noticias", "Deportes", "Música", "Entretenimiento", "Cine & Series")
 
     val DEFAULT_CHANNELS = listOf(
         Channel(
-            id = "tve1",
-            name = "La 1 (RTVE)",
+            id = "canal26",
+            name = "Canal 26 (Argentina)",
             category = "Noticias",
-            url = "https://rtvelivehlspull-lh.akamaihd.net/i/la1_g_main@325430/index_1500_av-p.m3u8",
-            logoUrl = "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=100"
-        ),
-        Channel(
-            id = "teledeporte",
-            name = "Teledeporte",
-            category = "Deportes",
-            url = "https://rtvelivehlspull-lh.akamaihd.net/i/tdp_g_main@324391/index_1500_av-p.m3u8",
-            logoUrl = "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=100"
-        ),
-        Channel(
-            id = "canal24h",
-            name = "Canal 24 Horas",
-            category = "Noticias",
-            url = "https://rtvelivehlspull-lh.akamaihd.net/i/24h_g_main@325178/index_1500_av-p.m3u8",
-            logoUrl = "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=100"
+            url = "https://live-col.canal26.com/hls/canal26col.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=120"
         ),
         Channel(
             id = "euronews",
             name = "Euronews Español",
             category = "Noticias",
             url = "https://euronews-es-p4-fast.streaming.amagi.tv/playlist.m3u8",
-            logoUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=100"
+            logoUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=120"
+        ),
+        Channel(
+            id = "dw_espanol",
+            name = "DW Español",
+            category = "Noticias",
+            url = "https://dwstream4-lh.akamaihd.net/i/dwespanol_1@115160/master.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=120"
+        ),
+        Channel(
+            id = "telesur",
+            name = "TeleSUR (Latinoamérica)",
+            category = "Noticias",
+            url = "https://telesurenvivo.gcdn.co/live/telesur_live/index.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=120"
         ),
         Channel(
             id = "redbull",
             name = "Red Bull TV",
             category = "Deportes",
             url = "https://rbmn-live.secure.footprint.net/v1/manifest/redbulltv-es.m3u8",
-            logoUrl = "https://images.unsplash.com/photo-1551698618-1dfe5d97d256?w=100"
+            logoUrl = "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=120"
         ),
         Channel(
-            id = "nasa",
-            name = "NASA TV Live",
-            category = "Entretenimiento",
-            url = "https://ntvlive.nasa.gov/hls/ntv-live.m3u8",
-            logoUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=100"
-        ),
-        Channel(
-            id = "fashion",
-            name = "Fashion TV",
-            category = "Entretenimiento",
-            url = "https://fash1043.cloudycdn.com/ytb/ftv_es/index.m3u8",
-            logoUrl = "https://images.unsplash.com/photo-1483985988355-763728e1935b?w=100"
-        ),
-        Channel(
-            id = "music_latino",
-            name = "Latino Hits",
+            id = "kissfmtv",
+            name = "KISS FM TV",
             category = "Música",
-            url = "https://d1zzm4shgmxsk.cloudfront.net/out/v1/673bbce6429944a9918738da0efcb8df/index.m3u8",
-            logoUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"
+            url = "https://kissfmtron-lh.akamaihd.net/i/KISSFM_1@505432/master.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=120"
         ),
         Channel(
-            id = "cine_classic",
-            name = "Cine Clásico",
+            id = "canalsur",
+            name = "Canal Sur Andalucía",
+            category = "Entretenimiento",
+            url = "https://canalsur-live.secure.footprint.net/v1/manifest/canalsur.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=120"
+        ),
+        Channel(
+            id = "canal_ciudad",
+            name = "Canal de la Ciudad (BA)",
+            category = "Entretenimiento",
+            url = "https://cda-fast-01.strm.com.ar/cdafast/live/playlist.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?w=120"
+        ),
+        Channel(
+            id = "cine_classic_mp4",
+            name = "Cine de Aventuras (Muestra)",
             category = "Cine & Series",
             url = "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-            logoUrl = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=100"
+            logoUrl = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=120"
         )
     )
 
