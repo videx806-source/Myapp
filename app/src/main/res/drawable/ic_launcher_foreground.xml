@@ -3,27 +3,15 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    
-    <!-- Outer TV frame -->
+    <!-- Beautiful bold TV Icon centered in the 108x108 viewport -->
     <path
-        android:fillColor="#00D4FF"
-        android:pathData="M24,30h60a8,8 0,0 1 8,8v28a8,8 0,0 1 -8,8h-60a8,8 0,0 1 -8,-8v-28a8,8 0,0 1 8,-8z" />
-    
-    <!-- Screen mask -->
+        android:fillColor="#FF5E7E"
+        android:pathData="M24,40 h60 c2.2,0 4,1.8 4,4 v32 c0,2.2 -1.8,4 -4,4 h-60 c-2.2,0 -4,-1.8 -4,-4 v-32 c0,-2.2 1.8,-4 4,-4 z" />
     <path
-        android:fillColor="#111118"
-        android:pathData="M28,34h52a4,4 0,0 1 4,4v20a4,4 0,0 1 -4,4h-52a4,4 0,0 1 -4,-4v-20a4,4 0,0 1 4,-4z" />
-        
-    <!-- Play sign inside the screen -->
+        android:fillColor="#0D0E15"
+        android:pathData="M28,44 h52 v24 h-52 z" />
+    <!-- Stand / Screen reflection details -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M46,41.5v15l13,-7.5z" />
-
-    <!-- Antennae / TV Feet -->
-    <path
-        android:fillColor="#00D4FF"
-        android:pathData="M48,74h12v4h-12z" />
-    <path
-        android:fillColor="#00D4FF"
-        android:pathData="M38,78h32v3h-32z" />
+        android:fillColor="#00FFCC"
+        android:pathData="M48,80 h12 l-3,4 h-6 z" />
 </vector>

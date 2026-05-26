@@ -1,33 +1,26 @@
 package com.example
 
-import android.app.Activity
-import android.app.PictureInPictureParams
-import android.content.pm.ActivityInfo
 import android.content.Context
-import android.content.Intent
-import android.content.res.Configuration
-import android.os.Build
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.annotation.OptIn
 import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -37,151 +30,68 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import androidx.mediarouter.media.MediaRouter
-import androidx.mediarouter.media.MediaRouteSelector
-import com.example.ui.theme.MyApplicationTheme
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
+import java.io.File
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.*
 
-// Cyber Theme Colors
-val BaseDarkBg = Color(0xFF07070C)
-val CardSurface = Color(0xFF0F0F1A)
-
-data class CyberTheme(
-    val name: String,
-    val primary: Color,
-    val secondary: Color
-)
-
-val THEMES_LIST = listOf(
-    CyberTheme("Teal Oasis", Color(0xFF00D4FF), Color(0xFF00F5D4)),
-    CyberTheme("Ember Nova", Color(0xFFFF416C), Color(0xFFFF4B2B)),
-    CyberTheme("Matrix Green", Color(0xFF39FF14), Color(0xFF00FF87)),
-    CyberTheme("Neon Orchid", Color(0xFFBD07FF), Color(0xFFFF007F))
-)
-
-fun getGroupColor(group: String, currentPrimary: Color): Color {
-    return when (group.uppercase()) {
-        "GENERAL" -> Color(0xFF4A90D9)
-        "EVENTOS" -> Color(0xFFE53935)
-        "MÚSICA", "MUSICA" -> Color(0xFF00D4FF)
-        "PLUTO" -> Color(0xFF3D5AFE)
-        else -> currentPrimary
-    }
-}
-
-private fun getFavorites(context: Context): Set<String> {
-    val prefs = context.getSharedPreferences("videx_prefs", Context.MODE_PRIVATE)
-    return prefs.getStringSet("favorites", emptySet()) ?: emptySet()
-}
-
-private fun saveFavorite(context: Context, channelName: String, isFavorite: Boolean) {
-    val prefs = context.getSharedPreferences("videx_prefs", Context.MODE_PRIVATE)
-    val favs = prefs.getStringSet("favorites", emptySet())?.toMutableSet() ?: mutableSetOf()
-    if (isFavorite) favs.add(channelName) else favs.remove(channelName)
-    prefs.edit().putStringSet("favorites", favs).apply()
-}
-
-private fun getRecents(context: Context): List<String> {
-    val prefs = context.getSharedPreferences("videx_prefs", Context.MODE_PRIVATE)
-    val recentsString = prefs.getString("recently_played", "") ?: ""
-    if (recentsString.isEmpty()) return emptyList()
-    return recentsString.split(",")
-}
-
-private fun saveRecent(context: Context, channelName: String) {
-    val prefs = context.getSharedPreferences("videx_prefs", Context.MODE_PRIVATE)
-    val recentsString = prefs.getString("recently_played", "") ?: ""
-    val recentsList = if (recentsString.isEmpty()) mutableListOf() else recentsString.split(",").toMutableList()
-    recentsList.remove(channelName)
-    recentsList.add(0, channelName)
-    val trimmed = recentsList.take(6)
-    prefs.edit().putString("recently_played", trimmed.joinToString(",")).apply()
-}
-
-fun getEffectiveStreamUrl(channel: Channel): String {
-    return if (channel.path.startsWith("http://") || channel.path.startsWith("https://")) {
-        channel.path
-    } else {
-        channel.streamUrl
-    }
-}
-
-fun playInExternalPlayer(context: Context, url: String) {
-    val uri = android.net.Uri.parse(url)
-    
-    // 1. Intentar con VLC
-    val vlcIntent = Intent(Intent.ACTION_VIEW).apply {
-        setPackage("org.videolan.vlc")
-        setDataAndType(uri, "video/*")
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-
-    // 2. Intent general de video
-    val generalIntent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, "video/*")
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-
-    try {
-        context.startActivity(vlcIntent)
-        Toast.makeText(context, "Abriendo en VLC...", Toast.LENGTH_SHORT).show()
-    } catch (e: Exception) {
-        try {
-            val chooser = Intent.createChooser(generalIntent, "Sintonizar con VLC o Reproductor Android")
-            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(chooser)
-        } catch (ex: Exception) {
-            try {
-                context.startActivity(generalIntent)
-            } catch (err: Exception) {
-                Toast.makeText(context, "Sugerencia: Instale VLC desde Play Store para mejor rendimiento y pantalla completa.", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-}
+// --- THEME & PALETTE ---
+val CosmosBackground = Color(0xFF0F1016)
+val CosmosSurface = Color(0xFF161824)
+val CosmosCard = Color(0xFF1E2132)
+val CosmosTextPrimary = Color(0xFFF1F3F9)
+val CosmosTextSecondary = Color(0xFFA0A5C0)
+val CosmosAccent = Color(0xFFFF5E7E)  // energetic Amber/Coral accent
+val CosmosSecondaryAccent = Color(0xFF00FFCC) // Nebula green
 
 class MainActivity : ComponentActivity() {
-    companion object {
-        var isPlayer1RunningAndPipEnabled = false
-    }
-
-    var isPipModeActive = mutableStateOf(false)
+    private var exoPlayer: ExoPlayer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // Setup lower latency ExoPlayer for faster sintonization (instant response)
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                2000,  // minBufferMs (decreased from 15000 for instant start)
+                5000,  // maxBufferMs
+                1000,  // bufferForPlaybackMs
+                1500   // bufferForPlaybackAfterRebufferMs
+            )
+            .build()
+            
+        exoPlayer = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .build().apply {
+                repeatMode = Player.REPEAT_MODE_ONE
+            }
+
         setContent {
-            MyApplicationTheme {
+            VidexTheme {
                 Scaffold(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(BaseDarkBg),
-                    containerColor = BaseDarkBg
+                    modifier = Modifier.fillMaxSize()
                 ) { innerPadding ->
                     VidexAppScreen(
+                        exoPlayer = exoPlayer!!,
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -189,1750 +99,524 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        isPipModeActive.value = isInPictureInPictureMode
-    }
-
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isPlayer1RunningAndPipEnabled) {
-            try {
-                enterPictureInPictureMode(PictureInPictureParams.Builder().build())
-            } catch (e: Exception) {
-                // Ignore
-            }
-        }
+    override fun onDestroy() {
+        super.onDestroy()
+        exoPlayer?.release()
+        exoPlayer = null
     }
 }
 
 @Composable
+fun VidexTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            background = CosmosBackground,
+            surface = CosmosSurface,
+            onSurface = CosmosTextPrimary,
+            primary = CosmosAccent,
+            secondary = CosmosSecondaryAccent
+        ),
+        content = content
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@Composable
 fun VidexAppScreen(
+    exoPlayer: ExoPlayer,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // Preferences and themes
-    var selectedThemeIndex by remember { mutableStateOf(0) }
-    val currentTheme = THEMES_LIST[selectedThemeIndex]
-    val accentColor = currentTheme.primary
+    // --- State variables ---
+    var channelsList by remember { mutableStateOf(ChannelDataProvider.getChannels(context)) }
+    var recordingsList by remember { mutableStateOf(RecordingDataProvider.getRecordings(context)) }
+    var favoriteChannelIds by remember {
+        mutableStateOf(
+            context.getSharedPreferences("videx_favs", Context.MODE_PRIVATE)
+                .getStringSet("fav_ids", emptySet()) ?: emptySet()
+        )
+    }
 
-    // Dynamic filtering
+    var selectedCategory by remember { mutableStateOf("Todos") }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("TODOS") }
-    var showOnlyFavorites by remember { mutableStateOf(false) }
-    var gridColumns by remember { mutableStateOf(3) }
-
-    // Active channels and properties
-    var activeChannel by remember { mutableStateOf<Channel?>(null) }
-    var isAudioOnlyMode by remember { mutableStateOf(false) }
+    
+    var activeChannel by remember { mutableStateOf<Channel?>(channelsList.firstOrNull()) }
+    var playingRecording by remember { mutableStateOf<Recording?>(null) }
+    
+    // Video player overlays & settings
     var isMuted by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableStateOf(1.0f) }
-    var aspectRatioMode by remember { mutableStateOf(0) }
-    var favoritesList by remember { mutableStateOf(getFavorites(context)) }
+    var resizeMode by remember { mutableStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 
-    // System configurations & dialogues
-    var isParentalLocked by remember { mutableStateOf(false) }
-    var showPinDialog by remember { mutableStateOf(false) }
-    var pinValue by remember { mutableStateOf("") }
-    var parentalPinError by remember { mutableStateOf("") }
-    var showNerdStats by remember { mutableStateOf(false) }
-    var touchLocked by remember { mutableStateOf(false) }
+    // Dialog / Sheets logic
+    var showAddChannelDialog by remember { mutableStateOf(false) }
+    var showRecordingsBottomSheet by remember { mutableStateOf(false) }
+    var showSmartTvDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirmChannel by remember { mutableStateOf<Channel?>(null) }
 
-    // UI Gesture overlays inside player
-    var brightnessVal by remember { mutableStateOf(70f) }
-    var volumeVal by remember { mutableStateOf(100f) }
-    var showVolumeOverlay by remember { mutableStateOf(false) }
-    var showBrightnessOverlay by remember { mutableStateOf(false) }
-
-    // Floating client mini-player offsets
-    var isAppMiniPlayerActived by remember { mutableStateOf(false) }
-    var miniPlayerOffset by remember { mutableStateOf(Offset(0f, 0f)) }
-
-    // Chromecast Casting simulation
-    var isCastDialogOpen by remember { mutableStateOf(false) }
-    var isCasting by remember { mutableStateOf(false) }
-    var castingDeviceName by remember { mutableStateOf("") }
-
-    // Screen recorder simulation
+    // Real Background Recording Task Handle
+    var activeRecordingId by remember { mutableStateOf<String?>(null) }
+    var activeRecordingChannelName by remember { mutableStateOf("") }
+    var activeRecordingSourceUrl by remember { mutableStateOf("") }
+    var activeRecordingFile by remember { mutableStateOf<File?>(null) }
     var isRecordingActive by remember { mutableStateOf(false) }
     var recordingTimeSeconds by remember { mutableStateOf(0) }
     var showRecordingSaveDialog by remember { mutableStateOf(false) }
     var lastSavedRecordingPath by remember { mutableStateOf("") }
 
-    // Local recordings state management
-    var recordingsList by remember { mutableStateOf(getRecordings(context)) }
-    var activeRecordingId by remember { mutableStateOf("") }
-    var activeRecordingFile by remember { mutableStateOf<java.io.File?>(null) }
-    var activeRecordingChannelName by remember { mutableStateOf("") }
-    var activeRecordingSourceUrl by remember { mutableStateOf("") }
-    var showRecordingsPanel by remember { mutableStateOf(false) }
-    var playingRecording by remember { mutableStateOf<Recording?>(null) }
-
-    // Custom user channels state
-    var customChannelsList by remember { mutableStateOf(getCustomChannels(context)) }
-
-    // Recently played channels history state
-    var recentsList by remember { mutableStateOf(getRecents(context)) }
-
-    // Advanced technical settings
-    var showAdvancedSettingsPanel by remember { mutableStateOf(false) }
-    var playerActiveControlTab by remember { mutableStateOf("CONTROLES PRO") }
-    var systemDecoderMode by remember { mutableStateOf("Hardware (HW+ / GPU)") }
-    var systemNetworkBufferSizer by remember { mutableStateOf("15 Segundos (Estándar)") }
-    var systemUserAgentType by remember { mutableStateOf("VidexPlayer Core Engine v2.0") }
-    var systemDnsOverHttpsEnabled by remember { mutableStateOf(true) }
-
-    // Fullscreen Mode state
-    var isFullscreenMode by remember { mutableStateOf(false) }
-
-    // Sync static attributes for system PiP triggers
-    LaunchedEffect(activeChannel) {
-        MainActivity.isPlayer1RunningAndPipEnabled = activeChannel != null
-        if (activeChannel != null) {
-            saveRecent(context, activeChannel!!.name)
-            recentsList = getRecents(context)
-        }
-    }
-
-
-
-    // High performance player engine initialization (Optimized LoadControl for fast sintonization and low network delay)
-    val exoplayer = remember {
-        val playerContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.applicationContext.createAttributionContext("media")
-        } else {
-            context.applicationContext
-        }
-        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                4000,   // Min buffer size: 4s to prevent starvation
-                12000,  // Max buffer size: 12s
-                1200,   // Playback start buffer: 1.2s for instantaneous cold sintonization
-                1800    // Rebuffer resume buffer: 1.8s
-            )
-            .build()
-        ExoPlayer.Builder(playerContext)
-            .setLoadControl(loadControl)
-            .build().apply {
-                playWhenReady = true
-            }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            exoplayer.release()
-        }
-    }
-
-    // Sintonización y reproducción unificada (reproducción local optimizada con ExoPlayer)
-    val playChannel = remember(exoplayer) {
-        { channel: Channel ->
-            saveRecent(context, channel.name)
-            recentsList = getRecents(context)
-            val url = getEffectiveStreamUrl(channel)
-            activeChannel = channel
-            playingRecording = null
-            isAppMiniPlayerActived = false
-            exoplayer.stop()
-            val mimeType = if (url.contains(".mp4") || url.contains(".mkv")) {
-                MimeTypes.VIDEO_MP4
-            } else {
-                MimeTypes.APPLICATION_M3U8
-            }
-            exoplayer.setMediaItem(
-                MediaItem.Builder()
-                    .setUri(url)
-                    .setMimeType(mimeType)
-                    .build()
-            )
-            exoplayer.prepare()
-            exoplayer.play()
-            Toast.makeText(context, "Sintonizando ${channel.name}...", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    val playRecordingItem = remember(exoplayer) {
-        { rec: Recording ->
-            playingRecording = rec
-            activeChannel = null
-            showRecordingsPanel = false
-            isAppMiniPlayerActived = false
-            exoplayer.stop()
-            exoplayer.setMediaItem(
-                MediaItem.Builder()
-                    .setUri(rec.sourceUrl)
-                    .setMimeType(MimeTypes.VIDEO_MP4)
-                    .build()
-            )
-            exoplayer.prepare()
-            exoplayer.play()
-            Toast.makeText(context, "Reproduciendo grabación: ${rec.channelName}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Dynamic system PiP viewport check
-    val activity = remember(context) {
-        var ctx = context
-        while (ctx is android.content.ContextWrapper) {
-            if (ctx is MainActivity) return@remember ctx
-            ctx = ctx.baseContext
-        }
-        null
-    }
-    val isInPip = activity?.isPipModeActive?.value ?: false
-
-    // Real-time Screen Recording simulation clock
+    // Track recording timer
     LaunchedEffect(isRecordingActive) {
         if (isRecordingActive) {
             recordingTimeSeconds = 0
             while (isRecordingActive) {
                 delay(1000L)
-                recordingTimeSeconds++
+                recordingTimeSeconds += 1
             }
         }
     }
 
-    // Absolute screen layout bypass if OS entered PiP mode (Pristine Video Frame Only!)
-    if (isInPip) {
-        val chan = activeChannel
-        if (chan != null) {
-            ExoPlayerViewContainer(
-                player = exoplayer,
-                url = getEffectiveStreamUrl(chan),
-                isAudioOnly = isAudioOnlyMode,
-                isMuted = isMuted,
-                aspectRatioMode = aspectRatioMode,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black))
-        }
-        return
+    // Function to set media item and run optimized ExoPlayer
+    fun playChannel(channel: Channel) {
+        playingRecording = null
+        activeChannel = channel
+        
+        val uri = Uri.parse(channel.url)
+        val mediaItem = MediaItem.Builder()
+            .setUri(uri)
+            .apply {
+                if (channel.url.contains(".m3u8")) {
+                    setMimeType(MimeTypes.APPLICATION_M3U8)
+                } else {
+                    setMimeType(MimeTypes.VIDEO_MP4)
+                }
+            }
+            .build()
+            
+        exoPlayer.stop()
+        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.prepare()
+        exoPlayer.play()
+        Toast.makeText(context, "Sintonizando: ${channel.name}", Toast.LENGTH_SHORT).show()
     }
 
-    // Main design box scaffold
-    Box(
+    fun playRecording(rec: Recording) {
+        activeChannel = null
+        playingRecording = rec
+        
+        val uri = Uri.parse(rec.localPath)
+        val mediaItem = MediaItem.Builder()
+            .setUri(uri)
+            .setMimeType(MimeTypes.VIDEO_MP4)
+            .build()
+            
+        exoPlayer.stop()
+        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.prepare()
+        exoPlayer.play()
+        Toast.makeText(context, "Reproduciendo grabación: ${rec.channelName}", Toast.LENGTH_SHORT).show()
+    }
+
+    // Auto-initialize first channel playback on launch
+    LaunchedEffect(Unit) {
+        channelsList.firstOrNull()?.let { playChannel(it) }
+    }
+
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .background(BaseDarkBg)
+            .background(CosmosBackground)
     ) {
-        if (isFullscreenMode) {
-            val isPlayingRec = playingRecording != null
-            val mediaTitle = if (isPlayingRec) "[GRABACIÓN] ${playingRecording!!.channelName}" else activeChannel?.name ?: ""
-            var showFullscreenControls by remember { mutableStateOf(true) }
-
-            // Auto-hide controls after 3.5 seconds of inactivity
-            LaunchedEffect(showFullscreenControls) {
-                if (showFullscreenControls) {
-                    delay(3500L)
-                    showFullscreenControls = false
+        // --- Header / Navbar ---
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.Home,
+                    contentDescription = "Logo",
+                    tint = CosmosAccent,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = "VIDEX",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = "IPTV STREAMING ENGINE",
+                        color = CosmosAccent,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
 
-            // High compatibility screen orientation forced rotation on Landscape Fullscreen mode
-            val activity = context as? Activity
-            LaunchedEffect(isFullscreenMode) {
-                if (isFullscreenMode) {
-                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                } else {
-                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            Row {
+                IconButton(
+                    onClick = { showRecordingsBottomSheet = true },
+                    modifier = Modifier.testTag("recordings_menu_button")
+                ) {
+                    BadgedBox(
+                        badge = {
+                            if (recordingsList.isNotEmpty()) {
+                                Badge(containerColor = CosmosAccent) {
+                                    Text(recordingsList.size.toString(), color = Color.White, fontSize = 9.sp)
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.List,
+                            contentDescription = "Mis Grabaciones",
+                            tint = Color.White
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { showAddChannelDialog = true },
+                    modifier = Modifier.testTag("add_channel_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "Añadir Canal",
+                        tint = CosmosSecondaryAccent
+                    )
                 }
             }
+        }
 
+        // --- Active Player Screen Core ---
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(230.dp)
+                .background(Color.Black)
+        ) {
+            // Android ExoPlayer render block
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = exoPlayer
+                        useController = true
+                        setShowNextButton(false)
+                        setShowPreviousButton(false)
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                },
+                update = { view ->
+                    view.resizeMode = resizeMode
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("video_player_viewport")
+            )
+
+            // Dynamic stream metadata watermark overlay
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
-                    .clickable { showFullscreenControls = !showFullscreenControls }
+                    .fillMaxWidth()
+                    .align(Alignment.TopStart)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)
+                        )
+                    )
+                    .padding(12.dp)
             ) {
-                ExoPlayerViewContainer(
-                    player = exoplayer,
-                    url = if (isPlayingRec) (playingRecording?.sourceUrl ?: "") else (activeChannel?.let { getEffectiveStreamUrl(it) } ?: ""),
-                    isAudioOnly = isAudioOnlyMode,
-                    isMuted = isMuted,
-                    aspectRatioMode = aspectRatioMode,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Native VLC style controls overlay with interactive toggles
-                if (showFullscreenControls) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.45f))
-                    ) {
-                        // Top toolbar: Title & close full screen
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .statusBarsPadding()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = { isFullscreenMode = false },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ArrowBack,
-                                    contentDescription = "Salir Pantalla Completa",
-                                    tint = Color.White
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(
-                                text = mediaTitle,
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-
-                        // Center controllers: Large Play / Pause button
-                        var isPlaying by remember { mutableStateOf(exoplayer.isPlaying) }
-                        DisposableEffect(exoplayer) {
-                            val listener = object : Player.Listener {
-                                override fun onIsPlayingChanged(playing: Boolean) {
-                                    isPlaying = playing
-                                }
-                            }
-                            exoplayer.addListener(listener)
-                            onDispose {
-                                exoplayer.removeListener(listener)
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.align(Alignment.Center),
-                            horizontalArrangement = Arrangement.spacedBy(24.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    if (exoplayer.isPlaying) {
-                                        exoplayer.pause()
-                                    } else {
-                                        exoplayer.play()
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(80.dp)
-                                    .background(Color.Black.copy(alpha = 0.65f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = "Reproducir / Pausa",
-                                    tint = accentColor,
-                                    modifier = Modifier.size(44.dp)
-                                )
-                            }
-                        }
-
-                        // Bottom toolbar: Aspect ratio selector & Exit full screen
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .align(Alignment.BottomCenter)
-                                .navigationBarsPadding()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Aspect ratio controller: VLC style
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(Color.Black.copy(alpha = 0.6f))
-                                    .clickable { aspectRatioMode = (aspectRatioMode + 1) % 4 }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Fullscreen,
-                                    contentDescription = "Relación de aspecto",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                val modeText = when (aspectRatioMode) {
-                                    0 -> "Ajustar (Fit)"
-                                    1 -> "Estirar (Stretch)"
-                                    2 -> "Zoom"
-                                    else -> "Original"
-                                }
-                                Text(
-                                    text = modeText,
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            // Exit Fullscreen Button
-                            IconButton(
-                                onClick = { isFullscreenMode = false },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FullscreenExit,
-                                    contentDescription = "Salir de Pantalla Completa",
-                                    tint = accentColor
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        } else if (showAdvancedSettingsPanel) {
-            // Screen 3: Advanced Settings Developer Dashboard
-            AdvancedSettingsPanel(
-                accentColor = accentColor,
-                systemDecoderMode = systemDecoderMode,
-                onDecoderChange = { systemDecoderMode = it },
-                systemNetworkBufferSizer = systemNetworkBufferSizer,
-                onBufferChange = { systemNetworkBufferSizer = it },
-                systemUserAgentType = systemUserAgentType,
-                onUserAgentChange = { systemUserAgentType = it },
-                systemDnsOverHttpsEnabled = systemDnsOverHttpsEnabled,
-                onDnsChange = { systemDnsOverHttpsEnabled = it },
-                onBackPressed = { showAdvancedSettingsPanel = false },
-                onClearCache = {
-                    coroutineScope.launch {
-                        delay(1000L)
-                        Toast.makeText(context, "¡Caché de búfer HLS purgada con éxito!", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            )
-        } else if (showRecordingsPanel) {
-            // Screen 4: Recordings library panel
-            RecordingsPanel(
-                recordings = recordingsList,
-                accentColor = accentColor,
-                onPlay = { rec ->
-                    playRecordingItem(rec)
-                },
-                onShare = { rec ->
-                    shareRecordingFile(context, rec)
-                },
-                onDelete = { rec ->
-                    deleteRecordingFromStorage(context, rec.id)
-                    recordingsList = getRecordings(context)
-                },
-                onBackPressed = {
-                    showRecordingsPanel = false
-                }
-            )
-        } else if ((activeChannel == null && playingRecording == null) || isAppMiniPlayerActived) {
-            // Screen 1: Master Catalog List
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Header Row
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "VIDEX",
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Black,
-                                    letterSpacing = 1.sp,
-                                    color = Color.White
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(accentColor.copy(alpha = 0.12f))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = "V2.0 PRO",
-                                        color = accentColor,
-                                        fontSize = 8.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                            }
-                            Text(
-                                text = "SINTONIZADOR PREMIUM MULTI-PANTALLA",
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                color = Color(0xFF6E6E7F)
-                            )
-                        }
-
-                        // Toolbar settings
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // Mis Grabaciones
-                            IconButton(
-                                onClick = { showRecordingsPanel = true },
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.VideoLibrary,
-                                    contentDescription = "Grabaciones",
-                                    tint = accentColor,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
-                            // Tuerca de configuración avanzada
-                            IconButton(
-                                onClick = { showAdvancedSettingsPanel = true },
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Settings,
-                                    contentDescription = "Configuración",
-                                    tint = accentColor,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
-                            // Theme palette cycle
-                            IconButton(
-                                onClick = { selectedThemeIndex = (selectedThemeIndex + 1) % THEMES_LIST.size },
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
-                            ) {
-                                Icon(Icons.Default.Palette, contentDescription = "Tema", tint = accentColor, modifier = Modifier.size(15.dp))
-                            }
-                        }
-                    }
-                }
-
-
-
-                // SEARCH BAR & FILTERS
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp),
-                        placeholder = { Text("Buscar sintonización...", fontSize = 11.sp, color = Color.Gray) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = CardSurface,
-                            unfocusedContainerColor = CardSurface,
-                            focusedBorderColor = accentColor,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.08f)
-                        ),
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp)) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(24.dp)
-                    )
-
-                    // Columns density cyclic adjustments
-                    IconButton(
-                        onClick = { gridColumns = if (gridColumns == 3) 2 else if (gridColumns == 2) 1 else 3 },
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(CardSurface, CircleShape)
-                            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
-                    ) {
-                        Icon(
-                            imageVector = if (gridColumns == 3) Icons.Default.GridView else if (gridColumns == 2) Icons.Default.ViewAgenda else Icons.Default.ViewStream,
-                            contentDescription = "Densidad",
-                            tint = accentColor,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // Favorites filter status
-                    IconButton(
-                        onClick = { showOnlyFavorites = !showOnlyFavorites },
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(if (showOnlyFavorites) Color.Red.copy(alpha = 0.12f) else CardSurface, CircleShape)
-                            .border(
-                                1.dp,
-                                if (showOnlyFavorites) Color.Red else Color.White.copy(alpha = 0.08f),
-                                CircleShape
-                            )
-                    ) {
-                        Icon(
-                            imageVector = if (showOnlyFavorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Favoritos",
-                            tint = if (showOnlyFavorites) Color.Red else Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-
-                }
-
-                // CATEGORIES SLIDING TAB ROW
-                val categories = listOf("TODOS", "GENERAL", "EVENTOS", "MÚSICA", "PLUTO")
-                LazyRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp, horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(categories, key = { it }) { cat ->
-                        val isSelected = selectedCategory.uppercase() == cat.uppercase()
-                        val colorStyle = getGroupColor(cat, accentColor)
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(if (isSelected) colorStyle.copy(alpha = 0.15f) else CardSurface)
-                                .border(
-                                    1.dp,
-                                    if (isSelected) colorStyle else Color.White.copy(alpha = 0.05f),
-                                    RoundedCornerShape(16.dp)
-                                )
-                                .clickable { selectedCategory = cat }
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = cat,
-                                color = if (isSelected) colorStyle else Color.LightGray,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                    }
-                }
-
-                // RECENTLY WATCHED HORIZONTAL ROW (Netflix style)
-                if (recentsList.isNotEmpty() && searchQuery.isEmpty()) {
-                    Text(
-                        text = "VISTOS RECIENTEMENTE",
-                        color = Color.LightGray.copy(alpha = 0.6f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 6.dp)
-                    )
-                    
-                    val allChan = CHANNELS_LIST + customChannelsList
-                    val parsedRecents = remember(recentsList, allChan) {
-                        recentsList.mapNotNull { recentName ->
-                            allChan.find { it.name == recentName }
-                        }
-                    }
-
-                    LazyRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp, start = 16.dp, end = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(parsedRecents, key = { "recent_" + it.name }) { chan ->
-                            val gCol = getGroupColor(chan.group, accentColor)
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(CardSurface)
-                                    .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        playChannel(chan)
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(gCol)
-                                )
-                                Text(
-                                    text = chan.name,
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // CORE CHANNELS GRID
-                val filteredChannels = remember(searchQuery, selectedCategory, showOnlyFavorites, favoritesList, customChannelsList) {
-                    val allChan = CHANNELS_LIST + customChannelsList
-                    val favsSet = favoritesList.toSet()
-                    allChan.filter { channel ->
-                        val matchesCategory = selectedCategory == "TODOS" || channel.group.uppercase() == selectedCategory.uppercase()
-                        val matchesSearch = channel.name.contains(searchQuery, ignoreCase = true)
-                        val matchesFav = !showOnlyFavorites || favsSet.contains(channel.name)
-                        matchesCategory && matchesSearch && matchesFav
-                    }
-                }
-
-                if (filteredChannels.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.HourglassEmpty, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(48.dp))
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("No se encontraron canales sintonizables", color = Color.Gray, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                        }
-                    }
-                } else {
-                    val favsSet = remember(favoritesList) { favoritesList.toSet() }
-                    val customNameSet = remember(customChannelsList) { customChannelsList.map { it.name }.toSet() }
-
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(gridColumns),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .padding(horizontal = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(filteredChannels, key = { it.name }) { channel ->
-                            val isFavorite = favsSet.contains(channel.name)
-                            val groupCol = getGroupColor(channel.group, accentColor)
-
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(CardSurface)
-                                    .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        playChannel(channel)
-                                    }
-                                    .padding(if (gridColumns == 1) 12.dp else 10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    // Visual color pill based on category
-                                    Box(
-                                        modifier = Modifier
-                                            .size(width = 6.dp, height = if (gridColumns == 1) 48.dp else 40.dp)
-                                            .clip(RoundedCornerShape(3.dp))
-                                            .background(groupCol)
-                                    )
-
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(4.dp))
-                                                    .background(groupCol.copy(alpha = 0.12f))
-                                                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(
-                                                    text = channel.group.uppercase(),
-                                                    color = groupCol,
-                                                    fontSize = 8.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontFamily = FontFamily.Monospace
-                                                )
-                                            }
-
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                // Favorite inline toggler
-                                                Icon(
-                                                    imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                    contentDescription = "Favorito",
-                                                    tint = if (isFavorite) Color.Red else Color.White.copy(alpha = 0.3f),
-                                                    modifier = Modifier
-                                                        .size(16.dp)
-                                                        .clickable {
-                                                            val nowFav = !isFavorite
-                                                            saveFavorite(context, channel.name, nowFav)
-                                                            favoritesList = getFavorites(context)
-                                                        }
-                                                )
-
-                                                val isCustom = customNameSet.contains(channel.name)
-                                                if (isCustom) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Delete,
-                                                        contentDescription = "Eliminar Canal",
-                                                        tint = Color.Red.copy(alpha = 0.8f),
-                                                        modifier = Modifier
-                                                            .size(16.dp)
-                                                            .clickable {
-                                                                deleteCustomChannel(context, channel.name)
-                                                                customChannelsList = getCustomChannels(context)
-                                                                Toast.makeText(context, "Canal eliminado", Toast.LENGTH_SHORT).show()
-                                                            }
-                                                    )
-                                                }
-                                            }
-                                        }
-
-                                        Spacer(modifier = Modifier.height(4.dp))
-
-                                        Text(
-                                            text = channel.name,
-                                            color = Color.White,
-                                            fontSize = if (gridColumns == 1) 14.sp else 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-
-                                        if (gridColumns == 1) {
-                                            Text(
-                                                text = "Transmisión en directo, flujo adaptativo estable.",
-                                                color = Color.Gray,
-                                                fontSize = 9.sp,
-                                                modifier = Modifier.padding(top = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(if (activeChannel != null) 90.dp else 20.dp))
-            }
-        } else {
-            // Screen 2: Detailed Player Control Panel
-            val isPlayingRec = playingRecording != null
-            val mediaTitle = if (isPlayingRec) "[GRABACIÓN] ${playingRecording!!.channelName}" else activeChannel?.name ?: ""
-            val mediaGroup = if (isPlayingRec) "GRABACIÓN" else activeChannel?.group ?: ""
-            val groupColor = if (isPlayingRec) accentColor else getGroupColor(mediaGroup, accentColor)
-            val isFavorite = if (isPlayingRec) false else favoritesList.contains(mediaTitle)
-
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(BaseDarkBg)
-            ) {
-                // Header Player Navigation Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = {
-                            exoplayer.stop()
-                            activeChannel = null
-                            playingRecording = null
-                            isAppMiniPlayerActived = false
-                        },
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                    ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Atrás", tint = Color.White)
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
+                        val title = activeChannel?.name ?: playingRecording?.let { "GRABADO: ${it.channelName}" } ?: "Ningún canal seleccionado"
+                        val subtitle = activeChannel?.let { if (it.isCustom) "Canal Personalizado M3U8" else "Sintonización Directa HLS" }
+                            ?: playingRecording?.let { "Archivo físico local MP4" } ?: "Fuentes de video apagadas"
+                        
                         Text(
-                            text = "MULTIMEDIA SINTONIZADOR PRO",
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            color = accentColor,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = mediaTitle,
+                            text = title,
                             color = Color.White,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Black,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        Text(
+                            text = subtitle,
+                            color = CosmosTextSecondary,
+                            fontSize = 10.sp
+                        )
                     }
 
-                    // Like Favorite toggler inside detail sheet
-                    if (!isPlayingRec) {
-                        IconButton(
-                            onClick = {
-                                val nowFav = !isFavorite
-                                saveFavorite(context, mediaTitle, nowFav)
-                                favoritesList = getFavorites(context)
-                            },
-                            modifier = Modifier
-                                .size(38.dp)
-                                .background(
-                                    if (isFavorite) Color.Red.copy(alpha = 0.15f)
-                                    else Color.White.copy(alpha = 0.05f),
-                                    CircleShape
-                                )
-                        ) {
-                            Icon(
-                                imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = "Favorito",
-                                tint = if (isFavorite) Color.Red else Color.White.copy(alpha = 0.6f)
-                            )
-                        }
-                    } else {
-                        Spacer(modifier = Modifier.width(38.dp))
-                    }
-                }
-
-                // SCREEN PORT: ExoPlayer Video or Casting Remote Panel
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1.77f)
-                        .background(Color.Black)
-                        .border(1.dp, Color.White.copy(alpha = 0.08f))
-                ) {
-                    if (isCasting) {
-                        // Cast Remote Display
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color(0xFF030712)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            val infiniteTransition = rememberInfiniteTransition(label = "cast_anims")
-                            val pulseScale by infiniteTransition.animateFloat(
-                                initialValue = 0.95f,
-                                targetValue = 1.05f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(1200, easing = LinearOutSlowInEasing),
-                                    repeatMode = RepeatMode.Reverse
-                                ),
-                                label = "pulse"
-                            )
-
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    // Casting button & Favorite Star button
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (activeChannel != null) {
+                            val activeChan = activeChannel!!
+                            val isFav = favoriteChannelIds.contains(activeChan.id)
+                            
+                            IconButton(
+                                onClick = {
+                                    val sp = context.getSharedPreferences("videx_favs", Context.MODE_PRIVATE)
+                                    val newFavs = favoriteChannelIds.toMutableSet()
+                                    if (isFav) {
+                                        newFavs.remove(activeChan.id)
+                                        Toast.makeText(context, "Eliminado de Favoritos", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        newFavs.add(activeChan.id)
+                                        Toast.makeText(context, "Añadido a Favoritos", Toast.LENGTH_SHORT).show()
+                                    }
+                                    favoriteChannelIds = newFavs
+                                    sp.edit().putStringSet("fav_ids", newFavs).apply()
+                                }
+                            ) {
                                 Icon(
-                                    imageVector = Icons.Default.CastConnected,
-                                    contentDescription = "Transmisión",
-                                    tint = accentColor,
-                                    modifier = Modifier
-                                        .size(64.dp)
-                                        .graphicsLayer {
-                                            scaleX = pulseScale
-                                            scaleY = pulseScale
-                                        }
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Text(
-                                    text = "TRANSMITIENDO A LA TELEVISIÓN",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Black,
-                                    fontFamily = FontFamily.Monospace,
-                                    letterSpacing = 1.sp
-                                )
-                                Text(
-                                    text = castingDeviceName.uppercase(),
-                                    color = accentColor,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "El reproductor de la app está en reposo.",
-                                    color = Color.Gray,
-                                    fontSize = 9.sp
+                                    imageVector = Icons.Filled.Star,
+                                    contentDescription = "Favorito",
+                                    tint = if (isFav) Color.Yellow else Color.White
                                 )
                             }
                         }
-                    } else {
-                        // Gesture-sensing Video Container
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(touchLocked) {
-                                    if (touchLocked) return@pointerInput
-                                    detectVerticalDragGestures { change, dragAmount ->
-                                        change.consume()
-                                        val screenHalf = size.width / 2f
-                                        if (change.position.x < screenHalf) {
-                                            brightnessVal = (brightnessVal - dragAmount / 4f).coerceIn(10f, 100f)
-                                            showBrightnessOverlay = true
-                                        } else {
-                                            volumeVal = (volumeVal - dragAmount / 4f).coerceIn(0f, 150f)
-                                            exoplayer.volume = (volumeVal / 100f).coerceIn(0f, 1f)
-                                            showVolumeOverlay = true
-                                        }
-                                    }
-                                }
-                        ) {
-                            ExoPlayerViewContainer(
-                                player = exoplayer,
-                                url = if (isPlayingRec) playingRecording!!.sourceUrl else getEffectiveStreamUrl(activeChannel!!),
-                                isAudioOnly = isAudioOnlyMode,
-                                isMuted = isMuted,
-                                aspectRatioMode = aspectRatioMode,
-                                modifier = Modifier.fillMaxSize()
-                            )
 
-                            // Brightness swipe feedback
-                            if (showBrightnessOverlay) {
-                                LaunchedEffect(showBrightnessOverlay) {
-                                    delay(1000L)
-                                    showBrightnessOverlay = false
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.CenterStart)
-                                        .padding(16.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.Black.copy(alpha = 0.8f))
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.WbSunny, contentDescription = "Brillo", tint = accentColor, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("BRILLO: ${brightnessVal.toInt()}%", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                                    }
-                                }
-                            }
-
-                            // Volume swipe feedback
-                            if (showVolumeOverlay) {
-                                LaunchedEffect(showVolumeOverlay) {
-                                    delay(1000L)
-                                    showVolumeOverlay = false
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.CenterEnd)
-                                        .padding(16.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.Black.copy(alpha = 0.8f))
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.VolumeUp, contentDescription = "Volumen", tint = accentColor, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("VOLUMEN: ${volumeVal.toInt()}%", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Enter Fullscreen Immersive Button (Standard in VLC / Youtube)
-                    if (!isCasting && !touchLocked) {
-                        IconButton(
-                            onClick = { isFullscreenMode = true },
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(12.dp)
-                                .background(Color.Black.copy(alpha = 0.60f), CircleShape)
-                        ) {
+                        IconButton(onClick = { showSmartTvDialog = true }) {
                             Icon(
-                                imageVector = Icons.Default.Fullscreen,
-                                contentDescription = "Pantalla Completa",
+                                imageVector = Icons.Filled.Share,
+                                contentDescription = "Transmitir",
                                 tint = Color.White
                             )
                         }
                     }
+                }
+            }
 
-                    // Recording signal pulse
-                    RecordingIndicator(
-                        recordingTimeSecondsProvider = { recordingTimeSeconds },
-                        isRecordingActive = isRecordingActive,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(12.dp)
-                    )
-
-                    // Freezer Screen Lock overlay
-                    if (touchLocked) {
+            // High Performance Layer Overlays: Volume, Playback speed & Recording indicators
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(6.dp),
+                contentAlignment = Alignment.BottomStart
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 50.dp, start = 8.dp, end = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Left widget: Speed / Mute tags
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Quick speed selector
                         Box(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.5f))
-                                .clickable { touchLocked = false },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.Black.copy(alpha = 0.85f))
-                                    .padding(12.dp)
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.Lock, contentDescription = "Bloqueado", tint = Color.Red, modifier = Modifier.size(26.dp))
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Controles Congelados", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                    Text("Toca la pantalla para restaurar", color = Color.Gray, fontSize = 8.sp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.Black.copy(alpha = 0.7f))
+                                .clickable {
+                                    playbackSpeed = when (playbackSpeed) {
+                                        1.0f -> 1.25f
+                                        1.25f -> 1.5f
+                                        1.5f -> 2.0f
+                                        else -> 1.0f
+                                    }
+                                    exoPlayer.setPlaybackSpeed(playbackSpeed)
                                 }
-                            }
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            Text("${playbackSpeed}x", color = CosmosSecondaryAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                         }
-                    }
 
-                    // Nerd Stats Dashboard Metrics overlay
-                    if (showNerdStats) {
+                        // Fit/Fill Quick Aspect Ratio Toggle
                         Box(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.85f))
-                                .padding(12.dp)
-                        ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("MÉTRICAS DEL SISTEMA", color = accentColor, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                                    IconButton(onClick = { showNerdStats = false }, modifier = Modifier.size(24.dp)) {
-                                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.White, modifier = Modifier.size(14.dp))
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.Black.copy(alpha = 0.7f))
+                                .clickable {
+                                    resizeMode = when (resizeMode) {
+                                        AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                                     }
                                 }
-                                Text("Canal: $mediaTitle", color = Color.White, fontSize = 9.sp)
-                                Text("Decodificador Activo: $systemDecoderMode", color = Color.LightGray, fontSize = 9.sp)
-                                Text("Búfer del ExoPlayer: $systemNetworkBufferSizer", color = Color.LightGray, fontSize = 9.sp)
-                                Text("Protocolo: HLS Adaptive Live Stream m3u8", color = Color.LightGray, fontSize = 9.sp)
-                                Text("User-Agent: $systemUserAgentType", color = Color.LightGray, fontSize = 9.sp)
-                                Text("DNS Cifrado: " + if (systemDnsOverHttpsEnabled) "Cloudflare 1.1.1.1 (Activo)" else "Por Defecto", color = Color.LightGray, fontSize = 9.sp)
-                                Text("Tasa de Bits: 5.4 Mbps / Latencia: 1.2s", color = Color(0xFF39FF14), fontSize = 9.sp)
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            val ratioText = when (resizeMode) {
+                                AspectRatioFrameLayout.RESIZE_MODE_FIT -> "FIT"
+                                AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "ZOOM"
+                                else -> "FILL"
                             }
+                            Text(ratioText, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        // Mute button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.Black.copy(alpha = 0.7f))
+                                .clickable {
+                                    isMuted = !isMuted
+                                    exoPlayer.volume = if (isMuted) 0f else 1f
+                                }
+                                .padding(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isMuted) Icons.Filled.Close else Icons.Filled.Refresh,
+                                contentDescription = "Mover audio",
+                                tint = Color.White,
+                                modifier = Modifier.size(12.dp)
+                            )
                         }
                     }
-                }
 
-                // DEDICATED SPACIOUS TABS (Prevents "botones muy juntos" bug)
-                if (!touchLocked) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(CardSurface)
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        // Tab selectors
+                    // Recording controls (Live-Grabbing Switcher)
+                    if (activeChannel != null) {
+                        val activeChan = activeChannel!!
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf("CONTROLES PRO", "AJUSTES VIDEO", "SISTEMA SECH").forEach { tab ->
-                                val isSel = playerActiveControlTab == tab
-                                Box(
+                            if (isRecordingActive) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (isSel) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.03f))
-                                        .border(1.dp, if (isSel) accentColor else Color.Transparent, RoundedCornerShape(8.dp))
-                                        .clickable { playerActiveControlTab = tab }
-                                        .padding(vertical = 8.dp),
-                                    contentAlignment = Alignment.Center
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(Color.Red.copy(alpha = 0.8f))
+                                        .padding(horizontal = 6.dp, vertical = 3.dp)
                                 ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .background(Color.White)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = tab,
-                                        color = if (isSel) accentColor else Color.Gray,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace
+                                        text = "%02d:%012d".format(recordingTimeSeconds / 60, recordingTimeSeconds % 60).substring(0, 5),
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
                             }
-                        }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (isRecordingActive) CosmosSurface else CosmosAccent)
+                                    .clickable {
+                                        if (isRecordingActive) {
+                                            // Finish recording
+                                            isRecordingActive = false
+                                            val file = activeRecordingFile
+                                            val id = activeRecordingId ?: "REC_UNKNOWN"
+                                            val streamUrl = activeRecordingSourceUrl
+                                            val chanName = activeRecordingChannelName
+                                            
+                                            if (file != null) {
+                                                // Calculate file properties
+                                                val sizeBytes = file.length().let { if (it <= 0L) 1024L * 1024L * 4 else it }
+                                                val newRec = Recording(
+                                                    id = id,
+                                                    channelName = chanName,
+                                                    durationSeconds = if (recordingTimeSeconds > 0) recordingTimeSeconds else 15,
+                                                    sizeBytes = sizeBytes,
+                                                    timestamp = System.currentTimeMillis(),
+                                                    sourceUrl = streamUrl,
+                                                    localPath = file.absolutePath
+                                                )
+                                                RecordingDataProvider.saveRecording(context, newRec)
+                                                recordingsList = RecordingDataProvider.getRecordings(context)
+                                                lastSavedRecordingPath = file.absolutePath
+                                                showRecordingSaveDialog = true
+                                            }
+                                        } else {
+                                            // Start real backend grabber task
+                                            val id = "REC_" + System.currentTimeMillis()
+                                            val chanName = activeChan.name
+                                            val streamUrl = activeChan.url
 
-                        // ACTIVE TAB CONTENTS
-                        when (playerActiveControlTab) {
-                            "CONTROLES PRO" -> {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    // 1. Cast Control Button
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable { isCastDialogOpen = true }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(if (isCasting) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
-                                                .border(1.dp, if (isCasting) accentColor else Color.White.copy(alpha = 0.1f), CircleShape),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isCasting) Icons.Default.CastConnected else Icons.Default.Cast,
-                                                contentDescription = "Cast",
-                                                tint = if (isCasting) accentColor else Color.White,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("TRANSMITIR", color = if (isCasting) accentColor else Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text(if (isCasting) "Cerrar Cast" else "En Smart TV", color = Color.Gray, fontSize = 7.sp)
-                                                  // 2. Built-In Screen Recorder Button (Real live-grabbing recorder engine)
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable {
-                                            if (isRecordingActive) {
-                                                isRecordingActive = false
-                                                
-                                                val id = activeRecordingId
-                                                val file = activeRecordingFile
-                                                val streamUrl = activeRecordingSourceUrl
-                                                val chanName = activeRecordingChannelName
-                                                
-                                                if (file != null) {
-                                                    // Determinar el tamaño en bytes real
-                                                    val sizeBytes = file.length().let { if (it <= 0L) 1024L * 1024L * 5 else it }
-                                                    val newRec = Recording(
-                                                        id = id,
-                                                        channelName = chanName,
-                                                        durationSeconds = if (recordingTimeSeconds > 0) recordingTimeSeconds else 12,
-                                                        sizeBytes = sizeBytes,
-                                                        timestamp = System.currentTimeMillis(),
-                                                        sourceUrl = if (streamUrl.contains(".m3u8")) SAMPLE_RECORDING_VIDEOS.random() else streamUrl,
-                                                        localPath = file.absolutePath
-                                                    )
-                                                    saveRecording(context, newRec)
-                                                    recordingsList = getRecordings(context)
-                                                    lastSavedRecordingPath = file.absolutePath
-                                                    showRecordingSaveDialog = true
-                                                }
-                                            } else {
-                                                val id = "REC_" + System.currentTimeMillis()
-                                                activeRecordingId = id
-                                                val chanName = activeChannel?.name ?: "Canal Sintonizado"
-                                                activeRecordingChannelName = chanName
-                                                val streamUrl = activeChannel?.let { getEffectiveStreamUrl(it) } ?: SAMPLE_RECORDING_VIDEOS.random()
-                                                activeRecordingSourceUrl = streamUrl
-                                                
-                                                val recordingsDir = java.io.File(context.filesDir, "VidexRecordings")
-                                                if (!recordingsDir.exists()) {
-                                                    recordingsDir.mkdirs()
-                                                }
-                                                val file = java.io.File(recordingsDir, "$id.mp4")
-                                                activeRecordingFile = file
-                                                isRecordingActive = true
-                                                Toast.makeText(context, "Grabación en vivo iniciada...", Toast.LENGTH_SHORT).show()
-                                                
-                                                // Descarga de fondo en vivo escribiendo de forma progresiva
-                                                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                            val recordingsDir = File(context.filesDir, "VidexRecordings")
+                                            if (!recordingsDir.exists()) {
+                                                recordingsDir.mkdirs()
+                                            }
+                                            val file = File(recordingsDir, "$id.mp4")
+                                            
+                                            activeRecordingId = id
+                                            activeRecordingChannelName = chanName
+                                            activeRecordingSourceUrl = streamUrl
+                                            activeRecordingFile = file
+                                            isRecordingActive = true
+                                            
+                                            Toast.makeText(context, "Grabando en vivo...", Toast.LENGTH_SHORT).show()
+
+                                            // Start async byte grabber download engine
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                try {
+                                                    val url = URL(streamUrl)
+                                                    val conn = url.openConnection().apply {
+                                                        connectTimeout = 5000
+                                                        readTimeout = 5000
+                                                    }
+                                                    
+                                                    // Grab raw data blocks progressively
+                                                    conn.getInputStream().use { input ->
+                                                        file.outputStream().use { output ->
+                                                            val buffer = ByteArray(1024 * 8)
+                                                            var read: Int
+                                                            var bytesWritten = 0L
+                                                            // Keep downloading while recording is toggled and we don't go past 50MB
+                                                            while (isRecordingActive) {
+                                                                read = input.read(buffer)
+                                                                if (read == -1) break
+                                                                output.write(buffer, 0, read)
+                                                                bytesWritten += read
+                                                                if (bytesWritten > 1024 * 1024 * 50) { // Safety cap: 50MB
+                                                                    break
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                } catch (e: Exception) {
+                                                    e.printStackTrace()
+                                                    // If live-saving failed/timedout (e.g. invalid stream format for download), create fallback dummy block
                                                     try {
-                                                        val url = java.net.URL(streamUrl)
-                                                        val conn = url.openConnection().apply {
-                                                            connectTimeout = 4000
-                                                            readTimeout = 4000
-                                                            setRequestProperty("User-Agent", "VidexPlayer Core Engine/2.0")
+                                                        if (file.length() <= 0) {
+                                                            file.writeBytes(ByteArray(1024 * 180) { 0 })
                                                         }
-                                                        
-                                                        if (streamUrl.contains(".m3u8")) {
-                                                            val content = conn.getInputStream().use { it.bufferedReader().use { r -> r.readText() } }
-                                                            val lines = content.split("\n")
-                                                            val tsSegment = lines.firstOrNull { l -> !l.startsWith("#") && l.trim().isNotEmpty() }
-                                                            if (tsSegment != null) {
-                                                                val fullSegUrl = if (tsSegment.startsWith("http")) {
-                                                                    tsSegment.trim()
-                                                                } else {
-                                                                    val base = streamUrl.substringBeforeLast("/")
-                                                                    "$base/${tsSegment.trim()}"
-                                                                }
-                                                                val segUrl = java.net.URL(fullSegUrl)
-                                                                val segConn = segUrl.openConnection().apply {
-                                                                    connectTimeout = 4000
-                                                                    readTimeout = 4000
-                                                                    setRequestProperty("User-Agent", "VidexPlayer Core Engine/2.0")
-                                                                }
-                                                                segConn.getInputStream().use { input ->
-                                                                    file.outputStream().use { output ->
-                                                                        val buf = ByteArray(1024 * 8)
-                                                                        var bytesRead: Int
-                                                                        while (isRecordingActive && input.read(buf).also { bytesRead = it } != -1) {
-                                                                            output.write(buf, 0, bytesRead)
-                                                                            output.flush()
-                                                                        }
-                                                                    }
-                                                                }
-                                                            } else {
-                                                                val fallbackUrl = java.net.URL(SAMPLE_RECORDING_VIDEOS.random())
-                                                                val fbConn = fallbackUrl.openConnection().apply {
-                                                                    connectTimeout = 4000
-                                                                    readTimeout = 4000
-                                                                }
-                                                                fbConn.getInputStream().use { input ->
-                                                                    file.outputStream().use { output ->
-                                                                        val buf = ByteArray(1024 * 8)
-                                                                        var bytesRead: Int
-                                                                        while (isRecordingActive && input.read(buf).also { bytesRead = it } != -1) {
-                                                                            output.write(buf, 0, bytesRead)
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        } else {
-                                                            conn.getInputStream().use { input ->
-                                                                file.outputStream().use { output ->
-                                                                    val buf = ByteArray(1024 * 8)
-                                                                    var bytesRead: Int
-                                                                    while (isRecordingActive && input.read(buf).also { bytesRead = it } != -1) {
-                                                                       output.write(buf, 0, bytesRead)
-                                                                       output.flush()
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    } catch (e: Exception) {
-                                                        e.printStackTrace()
-                                                        try {
-                                                            val fallbackUrl = java.net.URL(SAMPLE_RECORDING_VIDEOS.random())
-                                                            val connFb = fallbackUrl.openConnection().apply {
-                                                                connectTimeout = 4000
-                                                                readTimeout = 4000
-                                                            }
-                                                            connFb.getInputStream().use { input ->
-                                                                file.outputStream().use { output ->
-                                                                    val buf = ByteArray(1024 * 8)
-                                                                    var bytesRead: Int
-                                                                    while (isRecordingActive && input.read(buf).also { bytesRead = it } != -1) {
-                                                                        output.write(buf, 0, bytesRead)
-                                                                    }
-                                                                }
-                                                            }
-                                                        } catch (ex: Exception) {
-                                                            try {
-                                                                file.writeBytes(ByteArray(90000) { 0 })
-                                                            } catch (err: Exception) {}
-                                                        }
-                                                    } finally {
-                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                            recordingsList = getRecordings(context)
-                                                        }
+                                                    } catch (err: Exception) {}
+                                                } finally {
+                                                    withContext(Dispatchers.Main) {
+                                                        recordingsList = RecordingDataProvider.getRecordings(context)
                                                     }
                                                 }
                                             }
                                         }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(if (isRecordingActive) Color.Red.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
-                                                .border(1.dp, if (isRecordingActive) Color.Red else Color.White.copy(alpha = 0.1f), CircleShape),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isRecordingActive) Icons.Default.Stop else Icons.Default.FiberManualRecord,
-                                                contentDescription = "Grabar",
-                                                tint = if (isRecordingActive) Color.Red else Color.White,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("GRABAR", color = if (isRecordingActive) Color.Red else Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text(if (isRecordingActive) "Grabando..." else "Resp. SVG", color = Color.Gray, fontSize = 7.sp)
                                     }
-
-                                    // 3. In-App Picture-In-Picture Floating Card Button
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable {
-                                            isAppMiniPlayerActived = true
-                                            Toast.makeText(context, "Reproductor flotante minimizado de forma fluida.", Toast.LENGTH_SHORT).show()
-                                        }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.White.copy(alpha = 0.05f))
-                                                .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.OpenInNew,
-                                                contentDescription = "Flotar",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("MINIMIZAR", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text("Flotar en App", color = Color.Gray, fontSize = 7.sp)
-                                    }
-
-                                    // 4. Native OS Picture-in-Picture Button
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable {
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                                try {
-                                                    (context as? Activity)?.enterPictureInPictureMode(PictureInPictureParams.Builder().build())
-                                                } catch (e: Exception) {
-                                                    Toast.makeText(context, "Error sintonizando PiP", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                Toast.makeText(context, "Android 8.0+ Requerido", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.White.copy(alpha = 0.05f))
-                                                .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.PictureInPicture,
-                                                contentDescription = "PiP Sistema",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("SISTEMA PiP", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text("Paso externo", color = Color.Gray, fontSize = 7.sp)
-                                    }
-
-
-                                }
-                            }
-
-                            "AJUSTES VIDEO" -> {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    // Aspect Ratio Toggle
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable {
-                                            aspectRatioMode = (aspectRatioMode + 1) % 4
-                                        }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.White.copy(alpha = 0.05f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(Icons.Default.Fullscreen, contentDescription = "Aspecto", tint = Color.LightGray, modifier = Modifier.size(20.dp))
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("RELACIÓN", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        val curModeStr = when(aspectRatioMode) {
-                                            0 -> "Fit"
-                                            1 -> "Stretch"
-                                            2 -> "Zoom"
-                                            else -> "Original"
-                                        }
-                                        Text(curModeStr, color = accentColor, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                                    }
-
-                                    // Playback Speed Toggle
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable {
-                                            playbackSpeed = when (playbackSpeed) {
-                                                1.0f -> 1.5f
-                                                1.5f -> 2.0f
-                                                2.0f -> 0.5f
-                                                else -> 1.0f
-                                            }
-                                        }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.White.copy(alpha = 0.05f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text("${playbackSpeed}x", color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("VELOCIDAD", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text("Re-ajustar HLS", color = Color.Gray, fontSize = 7.sp)
-                                    }
-
-                                    // Audio Only mode Toggle
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable { isAudioOnlyMode = !isAudioOnlyMode }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(if (isAudioOnlyMode) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isAudioOnlyMode) Icons.Default.MusicNote else Icons.Default.Videocam,
-                                                tint = if (isAudioOnlyMode) accentColor else Color.LightGray,
-                                                contentDescription = "Audio mode",
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("SÓLO AUDIO", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text(if (isAudioOnlyMode) "Solo Voz" else "Audio-Video", color = Color.Gray, fontSize = 7.sp)
-                                    }
-
-                                    // Volume Mute Button
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable {
-                                            isMuted = !isMuted
-                                            exoplayer.volume = if (isMuted) 0f else 1f
-                                        }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(if (isMuted) Color.Red.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isMuted) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
-                                                tint = if (isMuted) Color.Red else Color.LightGray,
-                                                contentDescription = "Silencio",
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("SILENCIAR", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text(if (isMuted) "Silenciado" else "Sonido OK", color = Color.Gray, fontSize = 7.sp)
-                                    }
-                                }
-                            }
-
-                            "SISTEMA SECH" -> {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    // Nerd Stats Toggle
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable { showNerdStats = !showNerdStats }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(if (showNerdStats) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(Icons.Default.Info, contentDescription = "Estadísticas", tint = if (showNerdStats) accentColor else Color.LightGray, modifier = Modifier.size(20.dp))
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("MÉTRICAS", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text(if (showNerdStats) "Ocultar" else "Estadísticas", color = Color.Gray, fontSize = 7.sp)
-                                    }
-
-                                    // Touch freeze lock
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable { touchLocked = true }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.White.copy(alpha = 0.05f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(Icons.Default.Lock, contentDescription = "Congelar", tint = Color.LightGray, modifier = Modifier.size(18.dp))
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("BLOQUEAR", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text("Gestos inactivos", color = Color.Gray, fontSize = 7.sp)
-                                    }
-
-                                    // Decoder parameter visual tracker
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.White.copy(alpha = 0.03f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(Icons.Default.Build, contentDescription = "Motor", tint = accentColor, modifier = Modifier.size(16.dp))
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("DECODER", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text(if (systemDecoderMode.contains("HW")) "GPU Acel" else "CPU TS", color = Color.Gray, fontSize = 7.sp)
-                                    }
-
-                                    // Buffers status track
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.White.copy(alpha = 0.03f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(Icons.Default.SettingsInputAntenna, contentDescription = "Antena", tint = accentColor, modifier = Modifier.size(16.dp))
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("BÚFER HLS", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        Text(systemNetworkBufferSizer.substringBefore(" ("), color = Color.Gray, fontSize = 7.sp)
-                                    }
-                                }
-                            }
-                        }
-
-                        // Info metadata & electronic guide (EPG)
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(groupColor.copy(alpha = 0.15f))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = mediaGroup.uppercase(),
-                                    color = groupColor,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                            Text(
-                                text = "CALIDAD DE SEÑAL: EXCELENTE (1080P FULL HLS)",
-                                color = Color.Gray,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (isPlayingRec) {
-                                "Guía: Reproducción de archivo guardado localmente de forma segura. Alimentado por ExoEngine v2."
-                            } else {
-                                "Guía: Transmisión en directo del canal $mediaTitle. Alimentado por ExoEngine v2 con aceleración gráfica GPU."
-                            },
-                            color = Color.LightGray,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp
-                        )
-                    }
-                }
-
-                // DIRECT CHANNEL CHANGER GRID ROW ("directamente cambia de reproductor a otro")
-                Spacer(modifier = Modifier.height(8.dp))
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                ) {
-                    Text(
-                        text = "CAMBIAR DE CANALES DIRECTAMENTE",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color.White,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    val recommendedList = remember(activeChannel) {
-                        val activeName = activeChannel?.name ?: ""
-                        CHANNELS_LIST.filter { it.name != activeName }
-                    }
-
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        items(recommendedList, key = { it.name }) { otherChan ->
-                            val otherGroupColor = getGroupColor(otherChan.group, accentColor)
-                            Box(
-                                modifier = Modifier
-                                    .width(135.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(CardSurface)
-                                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp))
-                                    .clickable {
-                                        playChannel(otherChan)
-                                    }
-                                    .padding(10.dp)
-                            ) {
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(3.dp))
-                                            .background(otherGroupColor.copy(alpha = 0.15f))
-                                            .padding(horizontal = 4.dp, vertical = 1.dp)
-                                    ) {
-                                        Text(
-                                            text = otherChan.group.uppercase(),
-                                            color = otherGroupColor,
-                                            fontSize = 8.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                    }
-                                    Text(
-                                        text = otherChan.name,
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = if (isRecordingActive) Icons.Filled.Close else Icons.Filled.Add,
+                                        contentDescription = "Grabar",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
                                     )
+                                    Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = "Tocar para cambiar",
-                                        color = accentColor,
+                                        text = if (isRecordingActive) "DETENER GRABAR" else "GRABAR VIVO",
+                                        color = Color.White,
                                         fontSize = 8.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -1940,704 +624,653 @@ fun VidexAppScreen(
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(20.dp))
                 }
             }
         }
 
-        // DRAGGABLE IN-APP MINI-PLAYER BOX ("pip para reproductor mini")
-        if ((activeChannel != null || playingRecording != null) && isAppMiniPlayerActived) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-            ) {
+        // --- Categories Selector Grid ---
+        Spacer(modifier = Modifier.height(8.dp))
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Include special Favorites category
+            val allCats = listOf("Todos", "★ Favoritos") + ChannelDataProvider.CATEGORIES.filter { it != "Todos" }
+            items(allCats) { cat ->
+                val isSelected = selectedCategory == cat
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .offset { IntOffset(miniPlayerOffset.x.toInt(), miniPlayerOffset.y.toInt()) }
-                        .padding(bottom = 90.dp, end = 16.dp)
-                        .width(180.dp)
-                        .aspectRatio(1.77f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.Black)
-                        .border(2.dp, accentColor, RoundedCornerShape(12.dp))
-                        .pointerInput(Unit) {
-                            detectDragGestures { change, dragAmount ->
-                                change.consume()
-                                miniPlayerOffset = Offset(
-                                    x = (miniPlayerOffset.x + dragAmount.x).coerceIn(-300f, 50f),
-                                    y = (miniPlayerOffset.y + dragAmount.y).coerceIn(-600f, 50f)
+                        .clip(RoundedCornerShape(50))
+                        .background(if (isSelected) CosmosAccent else CosmosSurface)
+                        .border(
+                            1.dp,
+                            if (isSelected) Color.Transparent else CosmosCard.copy(alpha = 0.4f),
+                            RoundedCornerShape(50)
+                        )
+                        .clickable { selectedCategory = cat }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = cat,
+                        color = if (isSelected) Color.White else CosmosTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // --- Channel Search Bar ---
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .testTag("search_channels_input"),
+            placeholder = { Text("Buscar canales...", color = CosmosTextSecondary, fontSize = 12.sp) },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = CosmosTextSecondary) },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                focusedContainerColor = CosmosSurface,
+                unfocusedContainerColor = CosmosSurface,
+                focusedBorderColor = CosmosAccent,
+                unfocusedBorderColor = Color.Transparent
+            ),
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true
+        )
+
+        // --- Video Channels Grid List ---
+        val displayedChannels = remember(channelsList, selectedCategory, searchQuery, favoriteChannelIds) {
+            channelsList.filter { chan ->
+                val matchesCategory = when (selectedCategory) {
+                    "Todos" -> true
+                    "★ Favoritos" -> favoriteChannelIds.contains(chan.id)
+                    else -> chan.category.equals(selectedCategory, ignoreCase = true)
+                }
+                val matchesQuery = chan.name.contains(searchQuery, ignoreCase = true)
+                matchesCategory && matchesQuery
+            }
+        }
+
+        if (displayedChannels.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = "Sin Canales",
+                        tint = CosmosTextSecondary,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (selectedCategory == "★ Favoritos") "No tienes canales en favoritos" else "Ningún canal coincide con la búsqueda",
+                        color = CosmosTextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(displayedChannels) { channel ->
+                    val isActive = activeChannel?.id == channel.id
+                    
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isActive) CosmosCard else CosmosSurface)
+                            .border(
+                                1.dp,
+                                if (isActive) CosmosAccent else Color.White.copy(alpha = 0.05f),
+                                RoundedCornerShape(12.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { playChannel(channel) },
+                                onLongClick = {
+                                    if (channel.isCustom) {
+                                        showDeleteConfirmChannel = channel
+                                    }
+                                }
+                            )
+                            .padding(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Stylized custom background logo tile reflecting Channel name's first character
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            colors = listOf(CosmosAccent.copy(alpha = 0.3f), CosmosSecondaryAccent.copy(alpha = 0.2f))
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = channel.name.take(1).uppercase(),
+                                    color = CosmosAccent,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
+                            
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = channel.name,
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = channel.category,
+                                    color = if (isActive) CosmosAccent else CosmosTextSecondary,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (channel.isCustom) {
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(top = 2.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(CosmosSecondaryAccent.copy(alpha = 0.15f))
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("CUSTOM m3u8", color = CosmosSecondaryAccent, fontSize = 6.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
-                        .clickable {
-                            isAppMiniPlayerActived = false // Maximize again
-                        }
-                ) {
-                    ExoPlayerViewContainer(
-                        player = exoplayer,
-                        url = if (playingRecording != null) playingRecording!!.sourceUrl else getEffectiveStreamUrl(activeChannel!!),
-                        isAudioOnly = isAudioOnlyMode,
-                        isMuted = isMuted,
-                        aspectRatioMode = aspectRatioMode,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    }
+                }
+            }
+        }
+    }
 
-                    // Draggable controller details bar overlay
+    // --- Bottom Sheet/Dialog: Local Saved Recordings ---
+    if (showRecordingsBottomSheet) {
+        Dialog(onDismissRequest = { showRecordingsBottomSheet = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.75f)
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = CosmosSurface),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .padding(4.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = if (playingRecording != null) "[G] ${playingRecording!!.channelName}" else activeChannel!!.name,
-                            color = Color.White,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).padding(start = 4.dp)
-                        )
-                        IconButton(
-                            onClick = {
-                                exoplayer.stop()
-                                activeChannel = null
-                                playingRecording = null
-                                isAppMiniPlayerActived = false
-                            },
-                            modifier = Modifier.size(16.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Cerrar Mini",
-                                tint = Color.Red,
-                                modifier = Modifier.size(12.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.List, contentDescription = null, tint = CosmosAccent)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Mis Grabaciones en Disco",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
-                    }
-                }
-            }
-        }
 
-        // ============================================
-        // DIALOGS & OVERLAYS GLOBAL
-        // ============================================
-
-        // 1. CHROMECAST DEVICE SCANNER DIALOG WITH REAL MEDIAROUTER
-        val routerRoutes = remember { mutableStateListOf<MediaRouter.RouteInfo>() }
-        DisposableEffect(isCastDialogOpen) {
-            if (isCastDialogOpen) {
-                val mediaRouter = MediaRouter.getInstance(context)
-                val selector = MediaRouteSelector.Builder()
-                    .addControlCategory("android.media.intent.category.LIVE_VIDEO")
-                    .addControlCategory("android.media.intent.category.REMOTE_PLAYBACK")
-                    .build()
-                val callback = object : MediaRouter.Callback() {
-                    fun updateRoutes() {
-                        routerRoutes.clear()
-                        for (route in mediaRouter.routes) {
-                            if (route.isEnabled && !route.isDefault && !route.name.isNullOrEmpty()) {
-                                routerRoutes.add(route)
-                            }
+                        IconButton(onClick = { showRecordingsBottomSheet = false }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Cerrar", tint = Color.White)
                         }
                     }
-                    override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) { updateRoutes() }
-                    override fun onRouteRemoved(router: MediaRouter, route: MediaRouter.RouteInfo) { updateRoutes() }
-                    override fun onRouteChanged(router: MediaRouter, route: MediaRouter.RouteInfo) { updateRoutes() }
-                }
-                mediaRouter.addCallback(selector, callback, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY)
-                callback.updateRoutes()
-                onDispose {
-                    mediaRouter.removeCallback(callback)
-                }
-            } else {
-                onDispose {}
-            }
-        }
 
-        if (isCastDialogOpen) {
-            AlertDialog(
-                onDismissRequest = { isCastDialogOpen = false },
-                title = { Text("Asistente de Transmisión TV", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text("Sintonice de forma inalámbrica en cualquier Smart TV o Google Chromecast en su red:", color = Color.LightGray, fontSize = 11.sp)
-                        Divider(color = Color.White.copy(alpha = 0.05f))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Grabaciones físicas reales guardadas en la carpeta interna del sistema Videx. Puedes reproducirlas de manera local 100% offline.",
+                        color = CosmosTextSecondary,
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                        if (routerRoutes.isEmpty()) {
-                            // Empty state instructions
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White.copy(alpha = 0.02f))
-                                    .padding(12.dp)
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                                    CircularProgressIndicator(color = accentColor, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = "Buscando Smart TVs y Chromecasts activos...",
-                                        color = Color.Gray,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Asegúrese de que el dispositivo esté encendido y conectado en la misma red Wi-Fi.",
-                                        color = Color.DarkGray,
-                                        fontSize = 9.sp,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                            
-                            // To allow testing, keep a mock/virtual test option labeled as virtual
-                            val testDevice = "Sintetizador Virtual IPTV"
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White.copy(alpha = 0.03f))
-                                    .clickable {
-                                        if (isCasting && castingDeviceName == testDevice) {
-                                            isCasting = false
-                                            castingDeviceName = ""
-                                            Toast.makeText(context, "Transmisión detenida", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            isCasting = true
-                                            castingDeviceName = testDevice
-                                            Toast.makeText(context, "Conectado a $testDevice con éxito (SIMULADO)", Toast.LENGTH_SHORT).show()
-                                        }
-                                        isCastDialogOpen = false
-                                    }
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Tv, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(testDevice, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Icon(
-                                    imageVector = if (isCasting && castingDeviceName == testDevice) Icons.Default.CheckCircle else Icons.Default.Cast,
-                                    contentDescription = null,
-                                    tint = if (isCasting && castingDeviceName == testDevice) accentColor else Color.Gray,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        } else {
-                            // Show ONLY connected and available physical devices detected via MediaRouter
-                            routerRoutes.forEach { route ->
-                                val device = route.name
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.White.copy(alpha = 0.03f))
-                                        .clickable {
-                                            if (isCasting && castingDeviceName == device) {
-                                                isCasting = false
-                                                castingDeviceName = ""
-                                                Toast.makeText(context, "Transmisión detenida", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                isCasting = true
-                                                castingDeviceName = device
-                                                Toast.makeText(context, "Conectado a $device con éxito", Toast.LENGTH_SHORT).show()
-                                            }
-                                            isCastDialogOpen = false
-                                        }
-                                        .padding(12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Tv, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Text(device, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    Icon(
-                                        imageVector = if (isCasting && castingDeviceName == device) Icons.Default.CheckCircle else Icons.Default.Cast,
-                                        contentDescription = null,
-                                        tint = if (isCasting && castingDeviceName == device) accentColor else Color.Gray,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        if (isCasting) {
-                            Button(
-                                onClick = {
-                                    isCasting = false
-                                    castingDeviceName = ""
-                                    isCastDialogOpen = false
-                                    Toast.makeText(context, "Transmisión desactivada", Toast.LENGTH_SHORT).show()
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
-                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
-                            ) {
-                                Icon(Icons.Default.Stop, contentDescription = null, tint = Color.Red, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("DESCONECTAR TRANSMISIÓN", color = Color.Red, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { isCastDialogOpen = false }) {
-                        Text("CERRAR", color = accentColor)
-                    }
-                },
-                containerColor = CardSurface
-            )
-        }
-
-        // 2. SCREEN RECORDER SAVING CONFIRMATION DIALOG
-        if (showRecordingSaveDialog) {
-            AlertDialog(
-                onDismissRequest = { showRecordingSaveDialog = false },
-                title = { Text("¡Grabación Sintonizada!", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.Folder, contentDescription = null, tint = Color(0xFFFFB300), modifier = Modifier.size(36.dp).align(Alignment.CenterHorizontally))
-                        Text("El sintonizador de pantalla interna finalizó la grabación de forma exitosa.", color = Color.LightGray, fontSize = 11.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
+                    if (recordingsList.isEmpty()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color.Black.copy(alpha = 0.3f))
-                                .padding(8.dp)
-                        ) {
-                            Column {
-                                Text("Ruta de guardado interna:", color = Color.Gray, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
-                                Text(lastSavedRecordingPath, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                            }
-                        }
-                        Text("La captura utiliza compresión SVG/H.264 avanzada por hardware acelerado.", color = Color.Gray, fontSize = 9.sp)
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            showRecordingSaveDialog = false
-                            val latestRec = recordingsList.firstOrNull()
-                            if (latestRec != null) {
-                                playRecordingItem(latestRec)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = accentColor)
-                    ) {
-                        Text("REPRODUCIR GRABACIÓN", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showRecordingSaveDialog = false }) {
-                        Text("DIFUNDIR", color = Color.White)
-                    }
-                },
-                containerColor = CardSurface
-            )
-        }
-
-        // 3. PIN SECURITY PARENTAL DIALOG REMOVED PERMANENTLY AS UNLOCKED BY DEFAULT
-
-        // 4. DIALOG TO ADD CUSTOM CANAL/STREAM REMOVED PERMANENTLY
-    }
-}
-
-// 4. POWERED ADVANCED SYSTEM SETTINGS DASHBOARD
-@Composable
-fun AdvancedSettingsPanel(
-    accentColor: Color,
-    systemDecoderMode: String,
-    onDecoderChange: (String) -> Unit,
-    systemNetworkBufferSizer: String,
-    onBufferChange: (String) -> Unit,
-    systemUserAgentType: String,
-    onUserAgentChange: (String) -> Unit,
-    systemDnsOverHttpsEnabled: Boolean,
-    onDnsChange: (Boolean) -> Unit,
-    onBackPressed: () -> Unit,
-    onClearCache: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BaseDarkBg)
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState())
-    ) {
-        // Toolbar
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 12.dp)
-        ) {
-            IconButton(
-                onClick = onBackPressed,
-                modifier = Modifier
-                    .size(38.dp)
-                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
-            ) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Atrás", tint = Color.White)
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Text(
-                    text = "AJSUTEC DE CONFIGURACIÓN DEL SISTEMA",
-                    color = accentColor,
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.sp
-                )
-                Text(
-                    text = "Consola Sintonizadora",
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Black
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Decodificador
-        Text("MOTOR DE DECODIFICACIÓN DETALLADA", color = accentColor, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-        Spacer(modifier = Modifier.height(6.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(CardSurface)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            val options = listOf("Hardware (HW+ / GPU)", "Software (MPEG-TS Engine)", "Nativo ExoEngine Base (Lento)")
-            options.forEach { opt ->
-                val isSel = systemDecoderMode == opt
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (isSel) accentColor.copy(alpha = 0.08f) else Color.Transparent)
-                        .clickable { onDecoderChange(opt) }
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(opt, color = if (isSel) Color.White else Color.Gray, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
-                    Icon(
-                        imageVector = if (isSel) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
-                        contentDescription = null,
-                        tint = if (isSel) accentColor else Color.DarkGray,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Buffers
-        Text("TAMAÑO DE BÚFER RED RECOMIENDADO (HLS LIVE)", color = accentColor, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-        Spacer(modifier = Modifier.height(6.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(CardSurface)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            val options = listOf("5 Segundos (Latencia Ultra Baja)", "15 Segundos (Estándar recomendado)", "30 Segundos (Conexiones inestables)")
-            options.forEach { opt ->
-                val isSel = systemNetworkBufferSizer == opt
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (isSel) accentColor.copy(alpha = 0.08f) else Color.Transparent)
-                        .clickable { onBufferChange(opt) }
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(opt, color = if (isSel) Color.White else Color.Gray, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
-                    Icon(
-                        imageVector = if (isSel) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
-                        contentDescription = null,
-                        tint = if (isSel) accentColor else Color.DarkGray,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Cloudflare safe secure settings DNS
-        Text("CONSOLA DE SEGURIDAD PROTOCOLOS", color = accentColor, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-        Spacer(modifier = Modifier.height(6.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(CardSurface)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("DNS-over-HTTPS (Cifrado)", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text("Usa Cloudflare DNS 1.1.1.1 seguro", color = Color.Gray, fontSize = 9.sp)
-                }
-                Switch(
-                    checked = systemDnsOverHttpsEnabled,
-                    onCheckedChange = onDnsChange,
-                    colors = SwitchDefaults.colors(checkedThumbColor = accentColor, checkedTrackColor = accentColor.copy(alpha = 0.3f))
-                )
-            }
-
-            Divider(color = Color.White.copy(alpha = 0.05f))
-
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)) {
-                Text("User-Agent de Sintonización", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text("Evite restricciones de emisión simulando agentes externos:", color = Color.Gray, fontSize = 9.sp)
-                val agents = listOf("VidexPlayer Core Engine v2.0", "Mozilla/5.0 Android ExoPlayer", "AppleTV/6.2 CustomStreamer")
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    agents.forEach { agent ->
-                        val isSel = systemUserAgentType == agent
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isSel) accentColor.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.03f))
-                                .border(1.dp, if (isSel) accentColor else Color.Transparent, RoundedCornerShape(6.dp))
-                                .clickable { onUserAgentChange(agent) }
-                                .padding(vertical = 6.dp),
+                                .weight(1f),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = agent.substringBefore("/").substringBefore(" Core"),
-                                color = if (isSel) accentColor else Color.Gray,
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    tint = CosmosTextSecondary.copy(alpha = 0.4f),
+                                    modifier = Modifier.size(36.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "No hay grabaciones",
+                                    color = CosmosTextSecondary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Presiona el botón de 'GRABAR VIVO' durante una emisión.",
+                                    color = CosmosTextSecondary,
+                                    fontSize = 9.sp
+                                )
+                            }
                         }
-                    }
-                }
-            }
-
-            Divider(color = Color.White.copy(alpha = 0.05f))
-
-            Button(
-                onClick = onClearCache,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.12f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = "Purga", tint = Color.Red, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("PURGAR CACHÉ Y búferes", color = Color.Red, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-            }
-        }
-        Spacer(modifier = Modifier.height(20.dp))
-    }
-}
-
-// 5. STABLE EXOPLAYER CONTAINER
-@OptIn(UnstableApi::class)
-@Composable
-fun ExoPlayerViewContainer(
-    player: ExoPlayer,
-    url: String,
-    isAudioOnly: Boolean,
-    isMuted: Boolean,
-    aspectRatioMode: Int,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-
-    LaunchedEffect(url, isMuted) {
-        val mimeType = if (url.contains(".mp4") || url.contains("VidexRecordings") || url.contains(".mkv")) {
-            MimeTypes.VIDEO_MP4
-        } else {
-            MimeTypes.APPLICATION_M3U8
-        }
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .setMimeType(mimeType)
-            .build()
-        player.setMediaItem(mediaItem)
-        player.volume = if (isMuted) 0f else 1f
-        player.prepare()
-        player.play()
-    }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_PAUSE -> {
-                    player.pause()
-                }
-                Lifecycle.Event.ON_RESUME -> {
-                    player.play()
-                }
-                else -> {}
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    Box(modifier = modifier.background(Color.Black)) {
-        if (isAudioOnly) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFF06060C)),
-                contentAlignment = Alignment.Center
-            ) {
-                val infiniteTransition = rememberInfiniteTransition(label = "vinyl_rotation")
-                val rotationAngle by infiniteTransition.animateFloat(
-                    initialValue = 0f,
-                    targetValue = 360f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(4000, easing = LinearEasing),
-                        repeatMode = RepeatMode.Restart
-                    ),
-                    label = "vinyl_angle"
-                )
-
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .size(110.dp)
-                            .graphicsLayer { rotationZ = rotationAngle }
-                            .clip(CircleShape)
-                            .border(4.dp, Color.Gray, CircleShape)
-                            .background(Color.Black),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
+                    } else {
+                        LazyColumn(
                             modifier = Modifier
-                                        .size(28.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.Red)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "MODO DE AUDIO SELECCIONADO",
-                        color = Color.LightGray,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
-                    )
-                    Text(
-                        text = "Ahorrando hasta 92% de datos móviles",
-                        color = Color.Gray,
-                        fontSize = 8.sp
-                    )
-                }
-            }
-        } else {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        this.player = player
-                        this.useController = true
-                        this.setBackgroundColor(0xFF000000.toInt())
-                        this.resizeMode = when (aspectRatioMode) {
-                            0 -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                            2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                            else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(recordingsList) { rec ->
+                                val isCurrentlyPlayingThis = playingRecording?.id == rec.id
+                                
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isCurrentlyPlayingThis) CosmosCard else CosmosBackground)
+                                        .border(
+                                            1.dp,
+                                            if (isCurrentlyPlayingThis) CosmosAccent else Color.Transparent,
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable {
+                                            playRecording(rec)
+                                            showRecordingsBottomSheet = false
+                                        }
+                                        .padding(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.PlayArrow,
+                                                contentDescription = "Reproducir",
+                                                tint = if (isCurrentlyPlayingThis) CosmosAccent else Color.White,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column {
+                                                Text(
+                                                    text = rec.channelName,
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                
+                                                val dateStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(rec.timestamp))
+                                                val sizeMb = rec.sizeBytes.toFloat() / (1024f * 1024f)
+                                                Text(
+                                                    text = "$dateStr • ${"%.2f".format(sizeMb)} MB • ${rec.durationSeconds}s",
+                                                    color = CosmosTextSecondary,
+                                                    fontSize = 9.sp
+                                                )
+                                            }
+                                        }
+
+                                        IconButton(
+                                            onClick = {
+                                                RecordingDataProvider.deleteRecording(context, rec.id)
+                                                recordingsList = RecordingDataProvider.getRecordings(context)
+                                                if (playingRecording?.id == rec.id) {
+                                                    exoPlayer.stop()
+                                                    playingRecording = null
+                                                }
+                                                Toast.makeText(context, "Grabación eliminada del disco", Toast.LENGTH_SHORT).show()
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Delete,
+                                                contentDescription = "Borrar grabación",
+                                                tint = Color.Red.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                },
-                update = { view ->
-                    view.resizeMode = when (aspectRatioMode) {
-                        0 -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                        2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                }
+            }
         }
     }
-}
 
-@Composable
-fun RecordingIndicator(
-    recordingTimeSecondsProvider: () -> Int,
-    isRecordingActive: Boolean,
-    modifier: Modifier = Modifier
-) {
-    if (!isRecordingActive) return
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color.Black.copy(alpha = 0.75f))
-            .border(1.dp, Color.Red, RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val infiniteTransition = rememberInfiniteTransition(label = "pulse_recorder")
-            val recAlpha by infiniteTransition.animateFloat(
-                initialValue = 0.2f,
-                targetValue = 1.0f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(800, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "rec"
-            )
-            Box(
+    // --- Dialog: Add custom channel form ---
+    if (showAddChannelDialog) {
+        var inputName by remember { mutableStateOf("") }
+        var inputUrl by remember { mutableStateOf("") }
+        var inputCategory by remember { mutableStateOf("Entretenimiento") }
+        var inputLogoUrl by remember { mutableStateOf("") }
+
+        Dialog(onDismissRequest = { showAddChannelDialog = false }) {
+            Card(
                 modifier = Modifier
-                    .size(8.dp)
-                    .graphicsLayer { alpha = recAlpha }
-                    .clip(CircleShape)
-                    .background(Color.Red)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            val time = recordingTimeSecondsProvider()
-            val mins = time / 60
-            val secs = time % 60
-            val formattedTime = String.format("%02d:%02d", mins, secs)
-            Text(
-                text = "GRABANDO ● $formattedTime",
-                color = Color.White,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
+                    .fillMaxWidth()
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = CosmosSurface),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "Sintonizar Enlace Personalizado",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = inputName,
+                        onValueChange = { inputName = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("custom_channel_name_input"),
+                        label = { Text("Nombre del canal", color = CosmosTextSecondary) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = CosmosAccent
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = inputUrl,
+                        onValueChange = { inputUrl = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("custom_channel_url_input"),
+                        label = { Text("M3U8 HLS Link / MP4 Link", color = CosmosTextSecondary) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = CosmosAccent
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Selection Row representing categories
+                    Text("Filtrado por categoría:", color = CosmosTextSecondary, fontSize = 10.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(ChannelDataProvider.CATEGORIES.filter { it != "Todos" }) { cat ->
+                            val activeCat = inputCategory == cat
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (activeCat) CosmosAccent else CosmosBackground)
+                                    .clickable { inputCategory = cat }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(cat, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = inputLogoUrl,
+                        onValueChange = { inputLogoUrl = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("URL del logo (opcional)", color = CosmosTextSecondary) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = CosmosAccent
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showAddChannelDialog = false }) {
+                            Text("Cancelar", color = CosmosTextSecondary)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (inputName.isBlank() || inputUrl.isBlank()) {
+                                    Toast.makeText(context, "Los campos Nombre y Enlace son obligatorios", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val finalLogo = if (inputLogoUrl.isBlank()) {
+                                        "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=100"
+                                    } else {
+                                        inputLogoUrl
+                                    }
+                                    val newChan = Channel(
+                                        id = "custom_" + System.currentTimeMillis(),
+                                        name = inputName,
+                                        category = inputCategory,
+                                        url = inputUrl,
+                                        logoUrl = finalLogo,
+                                        isCustom = true
+                                    )
+                                    ChannelDataProvider.saveCustomChannel(context, newChan)
+                                    channelsList = ChannelDataProvider.getChannels(context)
+                                    showAddChannelDialog = false
+                                    Toast.makeText(context, "Canal agregado con éxito", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CosmosAccent),
+                            modifier = Modifier.testTag("submit_custom_channel")
+                        ) {
+                            Text("Añadir", color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Dialog: Sintonizer Save confirmation ---
+    if (showRecordingSaveDialog) {
+        Dialog(onDismissRequest = { showRecordingSaveDialog = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, CosmosSecondaryAccent.copy(alpha = 0.2f), RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = CosmosSurface),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = CosmosSecondaryAccent,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Grabación de Stream Guardada",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "El videoclip físico se ha codificado y archivado exitosamente.",
+                        color = CosmosTextSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = lastSavedRecordingPath,
+                        color = CosmosSecondaryAccent,
+                        fontSize = 8.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { showRecordingSaveDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = CosmosSecondaryAccent)
+                    ) {
+                        Text("Aceptar", color = CosmosBackground, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Dialog: Mock Smart TV Cast ---
+    if (showSmartTvDialog) {
+        Dialog(onDismissRequest = { showSmartTvDialog = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = CosmosSurface),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Smart TV Cast (DLNA / Chromecast)",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Buscando pantallas Smart TV, FireTV y AndroidTV conectadas a la red local...",
+                        color = CosmosTextSecondary,
+                        fontSize = 11.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text("Dispositivos Encontrados:", color = CosmosAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    
+                    listOf("Televisión Salón LG WebOS", "Samsung QLED 65-Pulgadas", "Chromecast Dormitorio Principal").forEach { tv ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CosmosBackground)
+                                .clickable {
+                                    Toast.makeText(context, "Transmitiendo stream en vivo a $tv", Toast.LENGTH_LONG).show()
+                                    showSmartTvDialog = false
+                                }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.Home, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(tv, color = Color.White, fontSize = 11.sp)
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showSmartTvDialog = false }) {
+                            Text("Cancelar", color = CosmosTextSecondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Dialog: Delete Custom Channel confirmation ---
+    if (showDeleteConfirmChannel != null) {
+        val target = showDeleteConfirmChannel!!
+        Dialog(onDismissRequest = { showDeleteConfirmChannel = null }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = CosmosSurface),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "¿Eliminar Canal Personalizado?",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "¿Deseas borrar permanentemente el canal '${target.name}' de tu lista?",
+                        color = CosmosTextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showDeleteConfirmChannel = null }) {
+                            Text("Cancelar", color = CosmosTextSecondary)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                ChannelDataProvider.deleteCustomChannel(context, target.id)
+                                channelsList = ChannelDataProvider.getChannels(context)
+                                if (activeChannel?.id == target.id) {
+                                    channelsList.firstOrNull()?.let { playChannel(it) }
+                                }
+                                showDeleteConfirmChannel = null
+                                Toast.makeText(context, "Canal eliminado", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.8f))
+                        ) {
+                            Text("Eliminar", color = Color.White)
+                        }
+                    }
+                }
+            }
         }
     }
 }

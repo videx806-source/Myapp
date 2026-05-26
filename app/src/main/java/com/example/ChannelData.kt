@@ -1,239 +1,126 @@
 package com.example
 
-data class Channel(
-    val name: String,
-    val path: String,
-    val group: String
-) {
-    val streamUrl: String
-        get() = if (path.startsWith("http://") || path.startsWith("https://")) path else "https://api.videx.lol/keyvidex.php?keyvidex=videx&stream=$path"
-}
+import android.content.Context
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
-val CHANNELS_LIST = listOf(
-    Channel("daznf1", "/daznf1/index.m3u8", "GENERAL"),
-    Channel("vevolat", "/vevolt/index.m3u8", "MÚSICA"),
-    Channel("unitelbo", "/unitel/index.m3u8", "GENERAL"),
-    Channel("espnar", "/espn/index.m3u8", "GENERAL"),
-    Channel("tycports", "/tycsports/main.m3u8", "GENERAL"),
-    Channel("ESPN MEXICO 2", "/espnmx2.m3u8", "GENERAL"),
-    Channel("FANATIZ 2", "/fanatiz2/index.m3u8", "EVENTOS"),
-    Channel("BEIN SPORTS 1", "/beinsports1/index.m3u8", "GENERAL"),
-    Channel("TELEFE", "/telefe/index.m3u8", "GENERAL"),
-    Channel("TVC SPORTS", "/tvc_deportes/index.m3u8", "GENERAL"),
-    Channel("ECDF LIGAPRO", "/ecdf_ligapro/index.m3u8", "GENERAL"),
-    Channel("UNIVISION", "/univision/index.m3u8", "GENERAL"),
-    Channel("DSPORTS PLUS", "/DSPORTS/videx.lol.m3u8", "GENERAL"),
-    Channel("ESPN BRASIL 2", "/BR/espn2/index.m3u8", "GENERAL"),
-    Channel("ESPN BR", "/espnbr/index.m3u8", "GENERAL"),
-    Channel("ESPN 3 BR", "/espn3br/index.m3u8", "GENERAL"),
-    Channel("PREMIER", "/premierbr/index.m3u8", "EVENTOS"),
-    Channel("PREMIER 2", "/premier2br/index.m3u8", "EVENTOS"),
-    Channel("PREMIER 3", "/premier3br/index.m3u8", "EVENTOS"),
-    Channel("PREMIER 4", "/premier4br/index.m3u8", "EVENTOS"),
-    Channel("ESPN DEPORTES MX", "/espndeportesmx/index.m3u8", "GENERAL"),
-    Channel("nbatv", "/nbatv/index.m3u8", "GENERAL"),
-    Channel("FOX SPORTS US", "/foxsportsus/index.m3u8", "GENERAL"),
-    Channel("SPORTV BR", "/sportv/index.m3u8", "GENERAL"),
-    Channel("SPORTV 2 BR", "/sportv2/index.m3u8", "GENERAL"),
-    Channel("SPORTV 3 BR", "/sportv3/index.m3u8", "GENERAL"),
-    Channel("EVENTOSBOLIVIA1", "/eventosbo1/index.m3u8", "EVENTOS"),
-    Channel("EVENTOSBOLIVIA2", "/eventosbo2/index.m3u8", "EVENTOS"),
-    Channel("EVENTOSBOLIVIA3", "/eventosbo3/index.m3u8", "EVENTOS"),
-    Channel("TNT SPORTS CHILE", "/tntsportschile/index.m3u8", "GENERAL"),
-    Channel("PREMIER 5 BR", "/premier5/index.m3u8", "EVENTOS"),
-    Channel("PREMIER 6 BR", "/premier6/index.m3u8", "EVENTOS"),
-    Channel("PREMIER 7 BR", "/premier7/index.m3u8", "EVENTOS"),
-    Channel("PREMIER 8 BR", "/premier8/index.m3u8", "EVENTOS"),
-    Channel("NFLNetwork", "/NFLNetwork/index.m3u8", "GENERAL"),
-    Channel("DEPORTV", "/deportv/index.m3u8", "GENERAL"),
-    Channel("DISNEY 11", "/disney11/index.m3u8", "EVENTOS"),
-    Channel("SKY NBA", "/skynba/index.m3u8", "GENERAL"),
-    Channel("EVENTOS", "/eventos/videx.m3u8", "EVENTOS"),
-    Channel("EVENTOS 2", "/eventos2/videx.m3u8", "EVENTOS"),
-    Channel("EVENTOS 3", "/eventos3/videx.m3u8", "EVENTOS"),
-    Channel("DSPORTS PREMIUM URUGUAY", "/dsportspremiumurg/index.m3u8", "GENERAL"),
-    Channel("DAZN 3 BALONCESTO", "/dazn3baloncesto/index.m3u8", "GENERAL"),
-    Channel("DAZN 2 BALONCESTO", "/dazn2baloncesto/index.m3u8", "GENERAL"),
-    Channel("DAZN BALONCESTO", "/daznbaloncesto/index.m3u8", "GENERAL"),
-    Channel("ONE 2", "/one2/index.m3u8", "GENERAL"),
-    Channel("LA LIGA TV EN", "/laligatven/index.m3u8", "GENERAL"),
-    Channel("NFL RED ZONE", "/nflredzone/index.m3u8", "GENERAL"),
-    Channel("dazn1op2", "/dazn1op2/index.m3u8", "GENERAL"),
-    Channel("LIGA 1 MAX OP2", "/liga1maxop2/index.m3u8", "GENERAL"),
-    Channel("foxone3", "/foxone3/index.m3u8", "GENERAL"),
-    Channel("hbomax", "/hbomax/index.m3u8", "GENERAL"),
-    Channel("fanatiz1", "/fanatiz1/index.m3u8", "EVENTOS"),
-    Channel("paramount1", "/paramount1/mono.m3u8", "EVENTOS"),
-    Channel("disney1", "/disney1/index.m3u8", "EVENTOS"),
-    Channel("disney2", "/disney2/index.m3u8", "EVENTOS"),
-    Channel("foxone1", "/foxone1/index.m3u8", "GENERAL"),
-    Channel("tudnof", "/tudnof/index.m3u8", "GENERAL"),
-    Channel("dsportsplus", "/dsplus/index.m3u8", "GENERAL"),
-    Channel("skylaliga", "/skylaliga/index.m3u8", "GENERAL"),
-    Channel("hyper1", "/hyper1/index.m3u8", "GENERAL"),
-    Channel("mls", "/mls/index.m3u8", "EVENTOS"),
-    Channel("mls2", "/mls2/index.m3u8", "EVENTOS"),
-    Channel("mls3", "/mls3/index.m3u8", "EVENTOS"),
-    Channel("winplus", "/winplus/moe.m3u8", "GENERAL"),
-    Channel("DSPORTS", "/canal/dsports.m3u8", "GENERAL"),
-    Channel("HBO", "/hbo", "GENERAL"),
-    Channel("CINE NOSTALGIA", "/peaky.techcoder40.workers.dev/6029.m3u8", "GENERAL"),
-    Channel("cartoon-nt-hd", "/cartoon-nt/index.m3u8", "GENERAL"),
-    Channel("Discovery ID", "/DISCOVERY-ID/live.m3u8", "GENERAL"),
-    Channel("kickcobraa", "/Kick/cobra/live.m3u8", "GENERAL"),
-    Channel("fanatiz5", "/fanatiz5/live.m3u8", "EVENTOS"),
-    Channel("ORBITA CHILE TELEVISION", "/orbita-cl/live.m3u8", "GENERAL"),
-    Channel("eventope", "/eventospe/love.m3u8", "EVENTOS"),
-    Channel("sporttv2", "/sporttv2/lice.m3u8", "GENERAL"),
-    Channel("canal+sport2", "/canalmasport2/love.m3u8", "GENERAL"),
-    Channel("tudnfullhd", "/tudn/4k.m3u8", "GENERAL"),
-    Channel("arena1premium", "/arena1premium/love.m3u8", "GENERAL"),
-    Channel("arena2premium", "/arena2premium/love.m3u8", "GENERAL"),
-    Channel("arena3premium", "/arena3premium/love.m3u8", "GENERAL"),
-    Channel("kpop", "/kpop/love.m3u8", "MÚSICA"),
-    Channel("goku24x7", "/goku/24x7.m3u8", "GENERAL"),
-    Channel("clarosports", "/clarosports/live.m3u8", "GENERAL"),
-    Channel("canalvix", "/vix/love.m3u8", "GENERAL"),
-    Channel("tigosports", "/tigosports/live.m3u8", "GENERAL"),
-    Channel("Cine max", "/cine_max/index.m3u8", "GENERAL"),
-    Channel("Golden", "/golden/index.m3u8", "GENERAL"),
-    Channel("A&E", "/ae/index.m3u8", "GENERAL"),
-    Channel("Nacional geográfica", "/national_geographic/index.m3u8", "GENERAL"),
-    Channel("De película", "/de_pelicula/index.m3u8", "GENERAL"),
-    Channel("Space", "/space/index.m3u8", "GENERAL"),
-    Channel("Tlnovelas", "/tlnovelas/index.m3u8", "GENERAL"),
-    Channel("Warner", "/warner/index.m3u8", "GENERAL"),
-    Channel("Animal planeta", "/animal_planeta/index.m3u8", "GENERAL"),
-    Channel("Golf Chanel", "/golf_channel/index.m3u8", "GENERAL"),
-    Channel("Disney Chanel", "/disney_channel/index.m3u8", "GENERAL"),
-    Channel("A3 series", "/a3_series/index.m3u8", "GENERAL"),
-    Channel("De películas plus", "/de_peliculas_plus/index.m3u8", "GENERAL"),
-    Channel("Discovery Chanel", "/discovery_channel/index.m3u8", "GENERAL"),
-    Channel("History", "/history/index.m3u8", "GENERAL"),
-    Channel("CARTOON NETWORK", "/cartoon_network/index.m3u8", "GENERAL"),
-    Channel("Golden plus", "/golden_plus/index.m3u8", "GENERAL"),
-    Channel("El Chano animado", "/el_chano_animado/index.m3u8", "GENERAL"),
-    Channel("Sony competencias", "/sony_competencias/index.m3u8", "GENERAL"),
-    Channel("Lo mejor de la liga MX", "/mejor_liga_mx/index.m3u8", "GENERAL"),
-    Channel("copasudamericanaevento", "/sudamericana/evento.m3u8", "EVENTOS"),
-    Channel("Eurosport 1 Español", "/Eurosport/live.m3u8", "GENERAL"),
-    Channel("3nes", "/3nes/mono.m3u8", "GENERAL"),
-    Channel("telecinco", "/telecincoes/mono.m3u8", "GENERAL"),
-    Channel("VTVMASURUGUAY", "/vtvmas/mono.m3u8", "GENERAL"),
-    Channel("MOVISTAR DEPORTES 1", "/movistar1/mono.m3u8", "GENERAL"),
-    Channel("MOVISTAR DEPORTES 2", "/movistar2/mono.m3u8", "GENERAL"),
-    Channel("MOVISTAR DEPORTES 3", "/movistar3/mono.m3u8", "GENERAL"),
-    Channel("MOVISTAR DEPORTES 4", "/movistar4/mono.m3u8", "GENERAL"),
-    Channel("MOVISTAR GOLF", "/movistargolf/mono.m3u8", "GENERAL"),
-    Channel("MOVISTAR LIGA DE CAMPEONES", "/movistarcampeones/mono.m3u8", "GENERAL"),
-    Channel("MOVISTAR LA LIGA", "/movistarliga/mono.m3u8", "GENERAL"),
-    Channel("DAZN", "/dazn1es/mono.m3u8", "GENERAL"),
-    Channel("DAZN 2", "/dazn2es/mono.m3u8", "GENERAL"),
-    Channel("DAZN 3", "/dazn3es/mono.m3u8", "GENERAL"),
-    Channel("DAZN 4", "/dazn4es/mono.m3u8", "GENERAL"),
-    Channel("CANAL + F1", "/canalmasf1/mono.m3u8", "GENERAL"),
-    Channel("#vamos Movistar", "/vamosmv/mono.m3u8", "GENERAL"),
-    Channel("Studio universal", "/studio_universal/index.m3u8", "GENERAL"),
-    Channel("Dreamworks Animation", "/dreamworks_animation/index.m3u8", "GENERAL"),
-    Channel("MLS DIRECT KICK", "/mls_direct_kick/index.m3u8", "GENERAL"),
-    Channel("MLS Direct Kick 2", "/mls_direct_kick_2/index.m3u8", "GENERAL"),
-    Channel("MLS Direct Kick 3", "/mls_direct_kick_3/index.m3u8", "GENERAL"),
-    Channel("MLS Direct Kick 4", "/mls_direct_kick_4/index.m3u8", "GENERAL"),
-    Channel("MLS Direct Kick 5", "/mls_direct_kick_5/index.m3u8", "GENERAL"),
-    Channel("TVC deportes", "/tvc_deportes/index.m3u8", "GENERAL"),
-    Channel("investigación Discovery", "/investigacion_discovery/index.m3u8", "GENERAL"),
-    Channel("Telehist", "/telehist/index.m3u8", "GENERAL"),
-    Channel("MTV LIVE", "/mtv_live/index.m3u8", "GENERAL"),
-    Channel("AZ CLIC", "/az_clic/index.m3u8", "GENERAL"),
-    Channel("E! Entretenimiento", "/e_entretenimiento/index.m3u8", "GENERAL"),
-    Channel("Comedy central", "/comedy_central/index.m3u8", "GENERAL"),
-    Channel("FILM AND ARTS", "/film_and_arts/index.m3u8", "GENERAL"),
-    Channel("Discovery kits", "/discovery_kits/index.m3u8", "GENERAL"),
-    Channel("Disney jr", "/disney_jr/index.m3u8", "GENERAL"),
-    Channel("Nick 2", "/nick_2/index.m3u8", "GENERAL"),
-    Channel("Todo cine", "/todo_cine/index.m3u8", "GENERAL"),
-    Channel("Todo novelas", "/todo_novelas/index.m3u8", "GENERAL"),
-    Channel("Cine extremo", "/cine_extremo/index.m3u8", "GENERAL"),
-    Channel("Cine Hollywood", "/cine_hollywood/index.m3u8", "GENERAL"),
-    Channel("Reino infantil", "/reino_infantil/index.m3u8", "GENERAL"),
-    Channel("FANATIZ 3", "/fanatiz3/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 4", "/fanatiz4/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 6", "/fanatiz6/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 7", "/fanatiz7/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 8", "/fanatiz8/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 9", "/fanatiz9/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 10", "/fanatiz10/index.m3u8", "EVENTOS"),
-    Channel("SPREEN KICK", "/spreen/kick.m3u8", "GENERAL"),
-    Channel("El Gourmet", "/ElGourmet/live.m3u8", "GENERAL"),
-    Channel("ORBITA TV 2", "/ORBITA_SPORTS_FHD/live.m3u8", "GENERAL"),
-    Channel("Paramount+ 2", "/Paramount2/love.m3u8", "EVENTOS"),
-    Channel("Paramount+ 3", "/Paramount3/love.m3u8", "EVENTOS"),
-    Channel("Paramount+ 4", "/Paramount4/love.m3u8", "EVENTOS"),
-    Channel("NBA TV 2", "/nba2/tv.m3u8", "GENERAL"),
-    Channel("TNT ARGENTINA", "/tntar/index.m3u8", "GENERAL"),
-    Channel("HYPER 2", "/hyper2/mono.m3u8", "EVENTOS"),
-    Channel("Cine max", "/cinemax/http.m3u8", "GENERAL"),
-    Channel("FX", "/fx/http.m3u8", "GENERAL"),
-    Channel("HOME AND HEALTH", "/homeandhealth/http.m3u8", "GENERAL"),
-    Channel("QUIERO MUSICA EN MI IDIOMA", "/musicaenmiidioma/index.m3u8", "MÚSICA"),
-    Channel("SOL MÚSICA", "/solmusica/lice.m3u8", "MÚSICA"),
-    Channel("HISTORY CHANNEL", "/historychanel/love.m3u8", "GENERAL"),
-    Channel("Discovery Channel", "/funx/love.m3u8", "GENERAL"),
-    Channel("FOX ONE 2", "/foxone2/index.m3u8", "GENERAL"),
-    Channel("BOB ESPONJA PANTALONES CUADRADOS", "/bob/m.m3u8", "PLUTO"),
-    Channel("LOS PADRINOS MÁGICOS", "/padrino/magico.m3u8", "PLUTO"),
-    Channel("LAS TORTUGAS NINJA", "/tortuga/live.m3u8", "PLUTO"),
-    Channel("Nickelodeon en español", "/nickelodeon/love.m3u8", "PLUTO"),
-    Channel("PEPAPIG", "/pepapig/love.m3u8", "PLUTO"),
-    Channel("LOS SIMPSON", "/simpson/love.m3u8", "GENERAL"),
-    Channel("DORA", "/dora/index.m3u8", "PLUTO"),
-    Channel("RUGRATS", "/rugrats/index.m3u8", "PLUTO"),
-    Channel("Nickelodeon Clásico", "/nickelodeon/clasico.m3u8", "PLUTO"),
-    Channel("MLS SOLO EVENTOS 1", "/mlsoloeventos/mono.m3u8", "EVENTOS"),
-    Channel("DISNEY 3", "/disney3/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 4", "/disney4/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 5", "/disney5/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 6", "/disney6/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 7", "/disney7/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 8", "/disney8/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 9", "/disney9/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 10", "/disney10/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 12", "/disney12/index.m3u8", "EVENTOS"),
-    Channel("DISNEY 13", "/disney13/index.m3u8", "EVENTOS"),
-    Channel("mls4", "/mls4/index.m3u8", "EVENTOS"),
-    Channel("mls5", "/mls5/index.m3u8", "EVENTOS"),
-    Channel("mls6", "/mls6/index.m3u8", "EVENTOS"),
-    Channel("mls7", "/mls7/index.m3u8", "EVENTOS"),
-    Channel("mls8", "/mls8/index.m3u8", "EVENTOS"),
-    Channel("mls9", "/mls9/index.m3u8", "EVENTOS"),
-    Channel("mls10", "/mls10/index.m3u8", "EVENTOS"),
-    Channel("mls11", "/mls11/index.m3u8", "EVENTOS"),
-    Channel("SUPER NOVA", "/evento/1.m3u8", "EVENTOS"),
-    Channel("SONY CINE", "/sonycine/chunks.m3u8", "GENERAL"),
-    Channel("WIN SPORTS", "/winsport/mono.m3u8", "GENERAL"),
-    Channel("EUROSPORT 2 ES", "/euro2es/mono.m3u8", "GENERAL"),
-    Channel("nba1", "/nba/live.m3u8", "GENERAL"),
-    Channel("nba2", "/nba1/index.m3u8", "GENERAL"),
-    Channel("mlb1", "/mlb1/index.m3u8", "GENERAL"),
-    Channel("CANAL 5", "/canal5mx/index.m3u8", "GENERAL"),
-    Channel("FANATIZ 11", "/fanatiz11/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 12", "/fanatiz12/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 13", "/fanatiz13/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 14", "/fanatiz14/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 15", "/fanatiz15/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 16", "/fanatiz16/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 17", "/fanatiz17/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 18", "/fanatiz18/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 19", "/fanatiz19/index.m3u8", "EVENTOS"),
-    Channel("FANATIZ 20", "/fanatiz20/index.m3u8", "EVENTOS"),
-    Channel("ESPN MEXICO", "/espnmx.m3u8", "GENERAL"),
-    Channel("ESPN MEXICO 3", "/espnmx3.m3u8", "GENERAL"),
-    Channel("ESPN MEXICO 4", "/espnmx4.m3u8", "GENERAL"),
-    Channel("A24", "/canal/a24.m3u8", "GENERAL"),
-    Channel("TOON DISNEY USA", "/toondisney/i.m3u8", "GENERAL"),
-    Channel("ESPN 3 SUR", "/espn3sur/mono.m3u8", "GENERAL"),
-    Channel("ESPN 4 SUR", "/espn4sur/mono.m3u8", "GENERAL"),
-    Channel("ESPN 5 SUR", "/espn5sur/mono.m3u8", "GENERAL"),
-    Channel("ESPN 6 SUR", "/espn6sur/mono.m3u8", "GENERAL"),
-    Channel("ESPN 7 SUR", "/espn7sur/mono.m3u8", "GENERAL")
+data class Channel(
+    val id: String,
+    val name: String,
+    val category: String,
+    val url: String,
+    val logoUrl: String,
+    val isCustom: Boolean = false
 )
+
+object ChannelDataProvider {
+    val CATEGORIES = listOf("Todos", "Deportes", "Cine & Series", "Entretenimiento", "Noticias", "Música")
+
+    val DEFAULT_CHANNELS = listOf(
+        Channel(
+            id = "tve1",
+            name = "La 1 (RTVE)",
+            category = "Noticias",
+            url = "https://rtvelivehlspull-lh.akamaihd.net/i/la1_g_main@325430/index_1500_av-p.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=100"
+        ),
+        Channel(
+            id = "teledeporte",
+            name = "Teledeporte",
+            category = "Deportes",
+            url = "https://rtvelivehlspull-lh.akamaihd.net/i/tdp_g_main@324391/index_1500_av-p.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=100"
+        ),
+        Channel(
+            id = "canal24h",
+            name = "Canal 24 Horas",
+            category = "Noticias",
+            url = "https://rtvelivehlspull-lh.akamaihd.net/i/24h_g_main@325178/index_1500_av-p.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=100"
+        ),
+        Channel(
+            id = "euronews",
+            name = "Euronews Español",
+            category = "Noticias",
+            url = "https://euronews-es-p4-fast.streaming.amagi.tv/playlist.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=100"
+        ),
+        Channel(
+            id = "redbull",
+            name = "Red Bull TV",
+            category = "Deportes",
+            url = "https://rbmn-live.secure.footprint.net/v1/manifest/redbulltv-es.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1551698618-1dfe5d97d256?w=100"
+        ),
+        Channel(
+            id = "nasa",
+            name = "NASA TV Live",
+            category = "Entretenimiento",
+            url = "https://ntvlive.nasa.gov/hls/ntv-live.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=100"
+        ),
+        Channel(
+            id = "fashion",
+            name = "Fashion TV",
+            category = "Entretenimiento",
+            url = "https://fash1043.cloudycdn.com/ytb/ftv_es/index.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1483985988355-763728e1935b?w=100"
+        ),
+        Channel(
+            id = "music_latino",
+            name = "Latino Hits",
+            category = "Música",
+            url = "https://d1zzm4shgmxsk.cloudfront.net/out/v1/673bbce6429944a9918738da0efcb8df/index.m3u8",
+            logoUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"
+        ),
+        Channel(
+            id = "cine_classic",
+            name = "Cine Clásico",
+            category = "Cine & Series",
+            url = "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+            logoUrl = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=100"
+        )
+    )
+
+    fun getChannels(context: Context): List<Channel> {
+        val sp = context.getSharedPreferences("videx_channels", Context.MODE_PRIVATE)
+        val json = sp.getString("custom_channels_list", "") ?: ""
+        if (json.isEmpty()) return DEFAULT_CHANNELS
+        return try {
+            val listType = object : TypeToken<List<Channel>>() {}.type
+            val custom: List<Channel> = Gson().fromJson(json, listType)
+            DEFAULT_CHANNELS + custom
+        } catch (e: Exception) {
+            DEFAULT_CHANNELS
+        }
+    }
+
+    fun saveCustomChannel(context: Context, channel: Channel) {
+        val sp = context.getSharedPreferences("videx_channels", Context.MODE_PRIVATE)
+        val json = sp.getString("custom_channels_list", "") ?: ""
+        val listType = object : TypeToken<List<Channel>>() {}.type
+        val currentList: MutableList<Channel> = if (json.isEmpty()) {
+            mutableListOf()
+        } else {
+            try {
+                Gson().fromJson(json, listType)
+            } catch (e: Exception) {
+                mutableListOf()
+            }
+        }
+        currentList.add(channel)
+        sp.edit().putString("custom_channels_list", Gson().toJson(currentList)).apply()
+    }
+
+    fun deleteCustomChannel(context: Context, channelId: String) {
+        val sp = context.getSharedPreferences("videx_channels", Context.MODE_PRIVATE)
+        val json = sp.getString("custom_channels_list", "") ?: ""
+        if (json.isEmpty()) return
+        val listType = object : TypeToken<List<Channel>>() {}.type
+        try {
+            val currentList: List<Channel> = Gson().fromJson(json, listType)
+            val filtered = currentList.filter { it.id != channelId }
+            sp.edit().putString("custom_channels_list", Gson().toJson(filtered)).apply()
+        } catch (e: Exception) {}
+    }
+}
