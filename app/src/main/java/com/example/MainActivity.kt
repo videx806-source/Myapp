@@ -2,6 +2,7 @@ package com.example
 
 import android.app.Activity
 import android.app.PictureInPictureParams
+import android.content.pm.ActivityInfo
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Build
@@ -232,7 +233,6 @@ fun VidexAppScreen(
 
     // Custom user channels state
     var customChannelsList by remember { mutableStateOf(getCustomChannels(context)) }
-    var showAddCustomChannelDialog by remember { mutableStateOf(false) }
 
     // Recently played channels history state
     var recentsList by remember { mutableStateOf(getRecents(context)) }
@@ -245,10 +245,8 @@ fun VidexAppScreen(
     var systemUserAgentType by remember { mutableStateOf("VidexPlayer Core Engine v2.0") }
     var systemDnsOverHttpsEnabled by remember { mutableStateOf(true) }
 
-    // Sleep Clock Timer configuration
-    var sleepTimerMinutes by remember { mutableStateOf(0) }
-    var sleepTimerMinutesLeft by remember { mutableStateOf(0) }
-    var sleepTimerIsActive by remember { mutableStateOf(false) }
+    // Fullscreen Mode state
+    var isFullscreenMode by remember { mutableStateOf(false) }
 
     // Sync static attributes for system PiP triggers
     LaunchedEffect(activeChannel) {
@@ -259,18 +257,7 @@ fun VidexAppScreen(
         }
     }
 
-    LaunchedEffect(sleepTimerIsActive, sleepTimerMinutesLeft) {
-        if (sleepTimerIsActive && sleepTimerMinutesLeft > 0) {
-            delay(60000L)
-            sleepTimerMinutesLeft -= 1
-            if (sleepTimerMinutesLeft <= 0) {
-                activeChannel = null
-                sleepTimerIsActive = false
-                sleepTimerMinutes = 0
-                Toast.makeText(context, "Temporizador: Transmisión apagada automáticamente", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
+
 
     // High performance player engine initialization
     val exoplayer = remember {
@@ -336,7 +323,178 @@ fun VidexAppScreen(
             .fillMaxSize()
             .background(BaseDarkBg)
     ) {
-        if (showAdvancedSettingsPanel) {
+        if (isFullscreenMode) {
+            val isPlayingRec = playingRecording != null
+            val mediaTitle = if (isPlayingRec) "[GRABACIÓN] ${playingRecording!!.channelName}" else activeChannel?.name ?: ""
+            var showFullscreenControls by remember { mutableStateOf(true) }
+
+            // Auto-hide controls after 3.5 seconds of inactivity
+            LaunchedEffect(showFullscreenControls) {
+                if (showFullscreenControls) {
+                    delay(3500L)
+                    showFullscreenControls = false
+                }
+            }
+
+            // High compatibility screen orientation forced rotation on Landscape Fullscreen mode
+            val activity = context as? Activity
+            LaunchedEffect(isFullscreenMode) {
+                if (isFullscreenMode) {
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                } else {
+                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { showFullscreenControls = !showFullscreenControls }
+            ) {
+                ExoPlayerViewContainer(
+                    player = exoplayer,
+                    url = if (isPlayingRec) (playingRecording?.sourceUrl ?: "") else (activeChannel?.let { getEffectiveStreamUrl(it) } ?: ""),
+                    isAudioOnly = isAudioOnlyMode,
+                    isMuted = isMuted,
+                    aspectRatioMode = aspectRatioMode,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Native VLC style controls overlay with interactive toggles
+                if (showFullscreenControls) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.45f))
+                    ) {
+                        // Top toolbar: Title & close full screen
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .statusBarsPadding()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = { isFullscreenMode = false },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ArrowBack,
+                                    contentDescription = "Salir Pantalla Completa",
+                                    tint = Color.White
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(
+                                text = mediaTitle,
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Center controllers: Large Play / Pause button
+                        var isPlaying by remember { mutableStateOf(exoplayer.isPlaying) }
+                        LaunchedEffect(exoplayer) {
+                            val listener = object : Player.Listener {
+                                override fun onIsPlayingChanged(playing: Boolean) {
+                                    isPlaying = playing
+                                }
+                            }
+                            exoplayer.addListener(listener)
+                        }
+
+                        Row(
+                            modifier = Modifier.align(Alignment.Center),
+                            horizontalArrangement = Arrangement.spacedBy(24.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    if (exoplayer.isPlaying) {
+                                        exoplayer.pause()
+                                    } else {
+                                        exoplayer.play()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(80.dp)
+                                    .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Reproducir / Pausa",
+                                    tint = accentColor,
+                                    modifier = Modifier.size(44.dp)
+                                )
+                            }
+                        }
+
+                        // Bottom toolbar: Aspect ratio selector & Exit full screen
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter)
+                                .navigationBarsPadding()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Aspect ratio controller: VLC style
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .clickable { aspectRatioMode = (aspectRatioMode + 1) % 4 }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fullscreen,
+                                    contentDescription = "Relación de aspecto",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                val modeText = when (aspectRatioMode) {
+                                    0 -> "Ajustar (Fit)"
+                                    1 -> "Estirar (Stretch)"
+                                    2 -> "Zoom"
+                                    else -> "Original"
+                                }
+                                Text(
+                                    text = modeText,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            // Exit Fullscreen Button
+                            IconButton(
+                                onClick = { isFullscreenMode = false },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FullscreenExit,
+                                    contentDescription = "Salir de Pantalla Completa",
+                                    tint = accentColor
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (showAdvancedSettingsPanel) {
             // Screen 3: Advanced Settings Developer Dashboard
             AdvancedSettingsPanel(
                 accentColor = accentColor,
@@ -369,7 +527,7 @@ fun VidexAppScreen(
                     exoplayer.setMediaItem(
                         MediaItem.Builder()
                             .setUri(rec.sourceUrl)
-                            .setMimeType(MimeTypes.APPLICATION_MP4)
+                            .setMimeType(MimeTypes.VIDEO_MP4)
                             .build()
                     )
                     exoplayer.prepare()
@@ -483,78 +641,7 @@ fun VidexAppScreen(
                     }
                 }
 
-                // SLEEP TIMER CONTROL SECTION
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(CardSurface)
-                        .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Timer,
-                            contentDescription = "Reloj",
-                            tint = if (sleepTimerIsActive) accentColor else Color.Gray,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "TEMPORIZADOR DE APAGADO",
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                color = Color.Gray
-                            )
-                            SleepTimerStatusText(
-                                isActive = sleepTimerIsActive,
-                                minutesLeftProvider = { sleepTimerMinutesLeft },
-                                accentColor = accentColor
-                            )
-                        }
-                    }
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        listOf(15, 30, 60).forEach { mins ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color.White.copy(alpha = 0.04f))
-                                    .border(
-                                        1.dp,
-                                        if (sleepTimerIsActive && sleepTimerMinutes == mins) accentColor else Color.Transparent,
-                                        RoundedCornerShape(6.dp)
-                                    )
-                                    .clickable {
-                                        if (sleepTimerIsActive && sleepTimerMinutes == mins) {
-                                            sleepTimerIsActive = false
-                                            sleepTimerMinutes = 0
-                                            sleepTimerMinutesLeft = 0
-                                            Toast.makeText(context, "Temporizador cancelado", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            sleepTimerMinutes = mins
-                                            sleepTimerMinutesLeft = mins
-                                            sleepTimerIsActive = true
-                                            Toast.makeText(context, "Apagado en $mins minutos configurado.", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text("${mins}M", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
 
                 // SEARCH BAR & FILTERS
                 Row(
@@ -620,25 +707,7 @@ fun VidexAppScreen(
                         )
                     }
 
-                    // Add Custom Channel button
-                    IconButton(
-                        onClick = { showAddCustomChannelDialog = true },
-                        modifier = Modifier
-                            .size(38.dp)
-                            .background(CardSurface, CircleShape)
-                            .border(
-                                1.dp,
-                                Color.White.copy(alpha = 0.08f),
-                                CircleShape
-                            )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Añadir Canal",
-                            tint = accentColor,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+
                 }
 
                 // CATEGORIES SLIDING TAB ROW
@@ -745,10 +814,11 @@ fun VidexAppScreen(
                 // CORE CHANNELS GRID
                 val filteredChannels = remember(searchQuery, selectedCategory, showOnlyFavorites, favoritesList, customChannelsList) {
                     val allChan = CHANNELS_LIST + customChannelsList
+                    val favsSet = favoritesList.toSet()
                     allChan.filter { channel ->
                         val matchesCategory = selectedCategory == "TODOS" || channel.group.uppercase() == selectedCategory.uppercase()
                         val matchesSearch = channel.name.contains(searchQuery, ignoreCase = true)
-                        val matchesFav = !showOnlyFavorites || favoritesList.contains(channel.name)
+                        val matchesFav = !showOnlyFavorites || favsSet.contains(channel.name)
                         matchesCategory && matchesSearch && matchesFav
                     }
                 }
@@ -767,6 +837,9 @@ fun VidexAppScreen(
                         }
                     }
                 } else {
+                    val favsSet = remember(favoritesList) { favoritesList.toSet() }
+                    val customNameSet = remember(customChannelsList) { customChannelsList.map { it.name }.toSet() }
+
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(gridColumns),
                         modifier = Modifier
@@ -777,7 +850,7 @@ fun VidexAppScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(filteredChannels, key = { it.name }) { channel ->
-                            val isFavorite = favoritesList.contains(channel.name)
+                            val isFavorite = favsSet.contains(channel.name)
                             val groupCol = getGroupColor(channel.group, accentColor)
 
                             Box(
@@ -854,7 +927,7 @@ fun VidexAppScreen(
                                                         }
                                                 )
 
-                                                val isCustom = customChannelsList.any { it.name == channel.name }
+                                                val isCustom = customNameSet.contains(channel.name)
                                                 if (isCustom) {
                                                     Icon(
                                                         imageVector = Icons.Default.Delete,
@@ -1114,6 +1187,23 @@ fun VidexAppScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // Enter Fullscreen Immersive Button (Standard in VLC / Youtube)
+                    if (!isCasting && !touchLocked) {
+                        IconButton(
+                            onClick = { isFullscreenMode = true },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(12.dp)
+                                .background(Color.Black.copy(alpha = 0.60f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Fullscreen,
+                                contentDescription = "Pantalla Completa",
+                                tint = Color.White
+                            )
                         }
                     }
 
@@ -1991,7 +2081,7 @@ fun VidexAppScreen(
                                 exoplayer.setMediaItem(
                                     MediaItem.Builder()
                                         .setUri(latestRec.sourceUrl)
-                                        .setMimeType(MimeTypes.APPLICATION_MP4)
+                                        .setMimeType(MimeTypes.VIDEO_MP4)
                                         .build()
                                 )
                                 exoplayer.prepare()
@@ -2015,125 +2105,7 @@ fun VidexAppScreen(
 
         // 3. PIN SECURITY PARENTAL DIALOG REMOVED PERMANENTLY AS UNLOCKED BY DEFAULT
 
-        // 4. DIALOG TO ADD CUSTOM CANAL/STREAM
-        if (showAddCustomChannelDialog) {
-            var customName by remember { mutableStateOf("") }
-            var customUrl by remember { mutableStateOf("") }
-            var customCat by remember { mutableStateOf("GENERAL") }
-            var customError by remember { mutableStateOf("") }
-
-            AlertDialog(
-                onDismissRequest = { showAddCustomChannelDialog = false },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = accentColor, modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Añadir Canal Personalizado", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    }
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            "Ingrese los datos de su flujo de streaming IPTV (soporta Urls directos .m3u8, .mp4, etc.):",
-                            color = Color.LightGray,
-                            fontSize = 11.sp
-                        )
-
-                        OutlinedTextField(
-                            value = customName,
-                            onValueChange = { customName = it },
-                            label = { Text("Nombre del canal", fontSize = 11.sp) },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = accentColor,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.15f)
-                            ),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        OutlinedTextField(
-                            value = customUrl,
-                            onValueChange = { customUrl = it },
-                            label = { Text("URL de Video (m3u8 / mp4)", fontSize = 11.sp) },
-                            placeholder = { Text("https://...", fontSize = 10.sp, color = Color.DarkGray) },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = accentColor,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.15f)
-                            ),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Text("Categoría / Grupo de transmisión:", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        
-                        val categoriesForCustom = listOf("GENERAL", "EVENTOS", "MÚSICA", "PLUTO")
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            categoriesForCustom.forEach { cat ->
-                                val selected = customCat == cat
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (selected) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.03f))
-                                        .border(
-                                            1.dp,
-                                            if (selected) accentColor else Color.White.copy(alpha = 0.05f),
-                                            RoundedCornerShape(8.dp)
-                                        )
-                                        .clickable { customCat = cat }
-                                        .padding(vertical = 8.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = cat,
-                                        color = if (selected) accentColor else Color.Gray,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-
-                        if (customError.isNotEmpty()) {
-                            Text(customError, color = Color.Red, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (customName.isBlank() || customUrl.isBlank()) {
-                                customError = "Por favor, complete todos los campos."
-                            } else if (!customUrl.startsWith("http://") && !customUrl.startsWith("https://")) {
-                                customError = "La URL del canal debe comenzar con http:// o https://"
-                            } else {
-                                val channel = Channel(name = customName.trim(), path = customUrl.trim(), group = customCat)
-                                saveCustomChannel(context, channel)
-                                customChannelsList = getCustomChannels(context)
-                                showAddCustomChannelDialog = false
-                                Toast.makeText(context, "Canal agregado: $customName", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = accentColor)
-                    ) {
-                        Text("GUARDAR", color = Color.Black)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showAddCustomChannelDialog = false }) {
-                        Text("CANCELAR", color = Color.White)
-                    }
-                },
-                containerColor = CardSurface
-            )
-        }
+        // 4. DIALOG TO ADD CUSTOM CANAL/STREAM REMOVED PERMANENTLY
     }
 }
 
@@ -2364,7 +2336,7 @@ fun ExoPlayerViewContainer(
 
     LaunchedEffect(url, isMuted) {
         val mimeType = if (url.contains(".mp4") || url.contains("VidexRecordings") || url.contains(".mkv")) {
-            MimeTypes.APPLICATION_MP4
+            MimeTypes.VIDEO_MP4
         } else {
             MimeTypes.APPLICATION_M3U8
         }
@@ -2476,20 +2448,6 @@ fun ExoPlayerViewContainer(
             )
         }
     }
-}
-
-@Composable
-fun SleepTimerStatusText(
-    isActive: Boolean,
-    minutesLeftProvider: () -> Int,
-    accentColor: Color
-) {
-    Text(
-        text = if (isActive) "Apagando en ${minutesLeftProvider()} min" else "Desactivado",
-        color = if (isActive) accentColor else Color.White,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold
-    )
 }
 
 @Composable
