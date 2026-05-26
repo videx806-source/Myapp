@@ -6,7 +6,7 @@ data class Channel(
     val group: String
 ) {
     val streamUrl: String
-        get() = "https://api.videx.lol/keyvidex.php?keyvidex=videx&stream=$path"
+        get() = if (path.startsWith("http://") || path.startsWith("https://")) path else "https://api.videx.lol/keyvidex.php?keyvidex=videx&stream=$path"
 }
 
 val CHANNELS_LIST = listOf(

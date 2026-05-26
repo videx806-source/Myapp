@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -99,6 +100,23 @@ private fun saveFavorite(context: Context, channelName: String, isFavorite: Bool
     val favs = prefs.getStringSet("favorites", emptySet())?.toMutableSet() ?: mutableSetOf()
     if (isFavorite) favs.add(channelName) else favs.remove(channelName)
     prefs.edit().putStringSet("favorites", favs).apply()
+}
+
+private fun getRecents(context: Context): List<String> {
+    val prefs = context.getSharedPreferences("videx_prefs", Context.MODE_PRIVATE)
+    val recentsString = prefs.getString("recently_played", "") ?: ""
+    if (recentsString.isEmpty()) return emptyList()
+    return recentsString.split(",")
+}
+
+private fun saveRecent(context: Context, channelName: String) {
+    val prefs = context.getSharedPreferences("videx_prefs", Context.MODE_PRIVATE)
+    val recentsString = prefs.getString("recently_played", "") ?: ""
+    val recentsList = if (recentsString.isEmpty()) mutableListOf() else recentsString.split(",").toMutableList()
+    recentsList.remove(channelName)
+    recentsList.add(0, channelName)
+    val trimmed = recentsList.take(6)
+    prefs.edit().putString("recently_played", trimmed.joinToString(",")).apply()
 }
 
 fun getEffectiveStreamUrl(channel: Channel): String {
@@ -212,6 +230,13 @@ fun VidexAppScreen(
     var showRecordingsPanel by remember { mutableStateOf(false) }
     var playingRecording by remember { mutableStateOf<Recording?>(null) }
 
+    // Custom user channels state
+    var customChannelsList by remember { mutableStateOf(getCustomChannels(context)) }
+    var showAddCustomChannelDialog by remember { mutableStateOf(false) }
+
+    // Recently played channels history state
+    var recentsList by remember { mutableStateOf(getRecents(context)) }
+
     // Advanced technical settings
     var showAdvancedSettingsPanel by remember { mutableStateOf(false) }
     var playerActiveControlTab by remember { mutableStateOf("CONTROLES PRO") }
@@ -228,6 +253,10 @@ fun VidexAppScreen(
     // Sync static attributes for system PiP triggers
     LaunchedEffect(activeChannel) {
         MainActivity.isPlayer1RunningAndPipEnabled = activeChannel != null
+        if (activeChannel != null) {
+            saveRecent(context, activeChannel!!.name)
+            recentsList = getRecents(context)
+        }
     }
 
     LaunchedEffect(sleepTimerIsActive, sleepTimerMinutesLeft) {
@@ -590,6 +619,26 @@ fun VidexAppScreen(
                             modifier = Modifier.size(16.dp)
                         )
                     }
+
+                    // Add Custom Channel button
+                    IconButton(
+                        onClick = { showAddCustomChannelDialog = true },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(CardSurface, CircleShape)
+                            .border(
+                                1.dp,
+                                Color.White.copy(alpha = 0.08f),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Añadir Canal",
+                            tint = accentColor,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
 
                 // CATEGORIES SLIDING TAB ROW
@@ -626,9 +675,77 @@ fun VidexAppScreen(
                     }
                 }
 
+                // RECENTLY WATCHED HORIZONTAL ROW (Netflix style)
+                if (recentsList.isNotEmpty() && searchQuery.isEmpty()) {
+                    Text(
+                        text = "VISTOS RECIENTEMENTE",
+                        color = Color.LightGray.copy(alpha = 0.6f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 6.dp)
+                    )
+                    
+                    val allChan = CHANNELS_LIST + customChannelsList
+                    val parsedRecents = remember(recentsList, allChan) {
+                        recentsList.mapNotNull { recentName ->
+                            allChan.find { it.name == recentName }
+                        }
+                    }
+
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp, start = 16.dp, end = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(parsedRecents, key = { "recent_" + it.name }) { chan ->
+                            val gCol = getGroupColor(chan.group, accentColor)
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(CardSurface)
+                                    .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        activeChannel = chan
+                                        isAppMiniPlayerActived = false
+                                        exoplayer.stop()
+                                        exoplayer.setMediaItem(
+                                            MediaItem
+                                                .Builder()
+                                                .setUri(getEffectiveStreamUrl(chan))
+                                                .setMimeType(MimeTypes.APPLICATION_M3U8)
+                                                .build()
+                                        )
+                                        exoplayer.prepare()
+                                        exoplayer.play()
+                                        Toast.makeText(context, "Sintonizando reciente: ${chan.name}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(gCol)
+                                )
+                                Text(
+                                    text = chan.name,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // CORE CHANNELS GRID
-                val filteredChannels = remember(searchQuery, selectedCategory, showOnlyFavorites, favoritesList) {
-                    CHANNELS_LIST.filter { channel ->
+                val filteredChannels = remember(searchQuery, selectedCategory, showOnlyFavorites, favoritesList, customChannelsList) {
+                    val allChan = CHANNELS_LIST + customChannelsList
+                    allChan.filter { channel ->
                         val matchesCategory = selectedCategory == "TODOS" || channel.group.uppercase() == selectedCategory.uppercase()
                         val matchesSearch = channel.name.contains(searchQuery, ignoreCase = true)
                         val matchesFav = !showOnlyFavorites || favoritesList.contains(channel.name)
@@ -719,19 +836,40 @@ fun VidexAppScreen(
                                                 )
                                             }
 
-                                            // Favorite inline toggler
-                                            Icon(
-                                                imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                contentDescription = "Favorito",
-                                                tint = if (isFavorite) Color.Red else Color.White.copy(alpha = 0.3f),
-                                                modifier = Modifier
-                                                    .size(16.dp)
-                                                    .clickable {
-                                                        val nowFav = !isFavorite
-                                                        saveFavorite(context, channel.name, nowFav)
-                                                        favoritesList = getFavorites(context)
-                                                    }
-                                            )
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                // Favorite inline toggler
+                                                Icon(
+                                                    imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                    contentDescription = "Favorito",
+                                                    tint = if (isFavorite) Color.Red else Color.White.copy(alpha = 0.3f),
+                                                    modifier = Modifier
+                                                        .size(16.dp)
+                                                        .clickable {
+                                                            val nowFav = !isFavorite
+                                                            saveFavorite(context, channel.name, nowFav)
+                                                            favoritesList = getFavorites(context)
+                                                        }
+                                                )
+
+                                                val isCustom = customChannelsList.any { it.name == channel.name }
+                                                if (isCustom) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Delete,
+                                                        contentDescription = "Eliminar Canal",
+                                                        tint = Color.Red.copy(alpha = 0.8f),
+                                                        modifier = Modifier
+                                                            .size(16.dp)
+                                                            .clickable {
+                                                                deleteCustomChannel(context, channel.name)
+                                                                customChannelsList = getCustomChannels(context)
+                                                                Toast.makeText(context, "Canal eliminado", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                    )
+                                                }
+                                            }
                                         }
 
                                         Spacer(modifier = Modifier.height(4.dp))
@@ -1876,6 +2014,126 @@ fun VidexAppScreen(
         }
 
         // 3. PIN SECURITY PARENTAL DIALOG REMOVED PERMANENTLY AS UNLOCKED BY DEFAULT
+
+        // 4. DIALOG TO ADD CUSTOM CANAL/STREAM
+        if (showAddCustomChannelDialog) {
+            var customName by remember { mutableStateOf("") }
+            var customUrl by remember { mutableStateOf("") }
+            var customCat by remember { mutableStateOf("GENERAL") }
+            var customError by remember { mutableStateOf("") }
+
+            AlertDialog(
+                onDismissRequest = { showAddCustomChannelDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Add, contentDescription = null, tint = accentColor, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Añadir Canal Personalizado", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "Ingrese los datos de su flujo de streaming IPTV (soporta Urls directos .m3u8, .mp4, etc.):",
+                            color = Color.LightGray,
+                            fontSize = 11.sp
+                        )
+
+                        OutlinedTextField(
+                            value = customName,
+                            onValueChange = { customName = it },
+                            label = { Text("Nombre del canal", fontSize = 11.sp) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = accentColor,
+                                unfocusedBorderColor = Color.White.copy(alpha = 0.15f)
+                            ),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = customUrl,
+                            onValueChange = { customUrl = it },
+                            label = { Text("URL de Video (m3u8 / mp4)", fontSize = 11.sp) },
+                            placeholder = { Text("https://...", fontSize = 10.sp, color = Color.DarkGray) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = accentColor,
+                                unfocusedBorderColor = Color.White.copy(alpha = 0.15f)
+                            ),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text("Categoría / Grupo de transmisión:", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        
+                        val categoriesForCustom = listOf("GENERAL", "EVENTOS", "MÚSICA", "PLUTO")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            categoriesForCustom.forEach { cat ->
+                                val selected = customCat == cat
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (selected) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.03f))
+                                        .border(
+                                            1.dp,
+                                            if (selected) accentColor else Color.White.copy(alpha = 0.05f),
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { customCat = cat }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = cat,
+                                        color = if (selected) accentColor else Color.Gray,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        if (customError.isNotEmpty()) {
+                            Text(customError, color = Color.Red, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (customName.isBlank() || customUrl.isBlank()) {
+                                customError = "Por favor, complete todos los campos."
+                            } else if (!customUrl.startsWith("http://") && !customUrl.startsWith("https://")) {
+                                customError = "La URL del canal debe comenzar con http:// o https://"
+                            } else {
+                                val channel = Channel(name = customName.trim(), path = customUrl.trim(), group = customCat)
+                                saveCustomChannel(context, channel)
+                                customChannelsList = getCustomChannels(context)
+                                showAddCustomChannelDialog = false
+                                Toast.makeText(context, "Canal agregado: $customName", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                    ) {
+                        Text("GUARDAR", color = Color.Black)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAddCustomChannelDialog = false }) {
+                        Text("CANCELAR", color = Color.White)
+                    }
+                },
+                containerColor = CardSurface
+            )
+        }
     }
 }
 
