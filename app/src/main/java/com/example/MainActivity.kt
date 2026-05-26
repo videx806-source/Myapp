@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.pm.ActivityInfo
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
@@ -128,6 +129,40 @@ fun getEffectiveStreamUrl(channel: Channel): String {
     }
 }
 
+fun playInExternalPlayer(context: Context, url: String) {
+    val uri = android.net.Uri.parse(url)
+    
+    // 1. Intentar con VLC
+    val vlcIntent = Intent(Intent.ACTION_VIEW).apply {
+        setPackage("org.videolan.vlc")
+        setDataAndType(uri, "video/*")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    // 2. Intent general de video
+    val generalIntent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "video/*")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    try {
+        context.startActivity(vlcIntent)
+        Toast.makeText(context, "Abriendo en VLC...", Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) {
+        try {
+            val chooser = Intent.createChooser(generalIntent, "Sintonizar con VLC o Reproductor Android")
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+        } catch (ex: Exception) {
+            try {
+                context.startActivity(generalIntent)
+            } catch (err: Exception) {
+                Toast.makeText(context, "Sugerencia: Instale VLC desde Play Store para mejor rendimiento y pantalla completa.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     companion object {
         var isPlayer1RunningAndPipEnabled = false
@@ -196,6 +231,7 @@ fun VidexAppScreen(
     var playbackSpeed by remember { mutableStateOf(1.0f) }
     var aspectRatioMode by remember { mutableStateOf(0) }
     var favoritesList by remember { mutableStateOf(getFavorites(context)) }
+    var useExternalPlayer by remember { mutableStateOf(true) }
 
     // System configurations & dialogues
     var isParentalLocked by remember { mutableStateOf(false) }
@@ -274,6 +310,66 @@ fun VidexAppScreen(
     DisposableEffect(Unit) {
         onDispose {
             exoplayer.release()
+        }
+    }
+
+    // Sintonización y reproducción unificada (integrado o reproducción nativa en VLC / Android Externo)
+    val playChannel = remember(useExternalPlayer, exoplayer) {
+        { channel: Channel ->
+            saveRecent(context, channel.name)
+            recentsList = getRecents(context)
+            val url = getEffectiveStreamUrl(channel)
+            if (useExternalPlayer) {
+                exoplayer.stop()
+                activeChannel = null
+                playingRecording = null
+                playInExternalPlayer(context, url)
+            } else {
+                activeChannel = channel
+                playingRecording = null
+                isAppMiniPlayerActived = false
+                exoplayer.stop()
+                val mimeType = if (url.contains(".mp4") || url.contains(".mkv")) {
+                    MimeTypes.VIDEO_MP4
+                } else {
+                    MimeTypes.APPLICATION_M3U8
+                }
+                exoplayer.setMediaItem(
+                    MediaItem.Builder()
+                        .setUri(url)
+                        .setMimeType(mimeType)
+                        .build()
+                )
+                exoplayer.prepare()
+                exoplayer.play()
+                Toast.makeText(context, "Sintonizando ${channel.name}...", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val playRecordingItem = remember(useExternalPlayer, exoplayer) {
+        { rec: Recording ->
+            if (useExternalPlayer) {
+                exoplayer.stop()
+                activeChannel = null
+                playingRecording = null
+                playInExternalPlayer(context, rec.sourceUrl)
+            } else {
+                playingRecording = rec
+                activeChannel = null
+                showRecordingsPanel = false
+                isAppMiniPlayerActived = false
+                exoplayer.stop()
+                exoplayer.setMediaItem(
+                    MediaItem.Builder()
+                        .setUri(rec.sourceUrl)
+                        .setMimeType(MimeTypes.VIDEO_MP4)
+                        .build()
+                )
+                exoplayer.prepare()
+                exoplayer.play()
+                Toast.makeText(context, "Reproduciendo grabación: ${rec.channelName}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -520,19 +616,7 @@ fun VidexAppScreen(
                 recordings = recordingsList,
                 accentColor = accentColor,
                 onPlay = { rec ->
-                    playingRecording = rec
-                    activeChannel = null // Ensure we play recording instead
-                    showRecordingsPanel = false
-                    exoplayer.stop()
-                    exoplayer.setMediaItem(
-                        MediaItem.Builder()
-                            .setUri(rec.sourceUrl)
-                            .setMimeType(MimeTypes.VIDEO_MP4)
-                            .build()
-                    )
-                    exoplayer.prepare()
-                    exoplayer.play()
-                    Toast.makeText(context, "Reproduciendo grabación de ${rec.channelName}...", Toast.LENGTH_SHORT).show()
+                    playRecordingItem(rec)
                 },
                 onShare = { rec ->
                     shareRecordingFile(context, rec)
@@ -744,6 +828,66 @@ fun VidexAppScreen(
                     }
                 }
 
+                // PLAYER PREFERENCE SELECTOR (Cyber Style)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardSurface)
+                        .border(1.dp, accentColor.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                        .clickable { useExternalPlayer = !useExternalPlayer }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(accentColor.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (useExternalPlayer) Icons.Default.CastConnected else Icons.Default.Tv,
+                                contentDescription = null,
+                                tint = accentColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "REPRODUCTOR PREDETERMINADO",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color.Gray
+                            )
+                            Text(
+                                text = if (useExternalPlayer) "VLC Player / Android (Pantalla Completa ★)" else "Reproductor Local Integrado",
+                                color = if (useExternalPlayer) accentColor else Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = useExternalPlayer,
+                        onCheckedChange = { useExternalPlayer = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = accentColor,
+                            uncheckedThumbColor = Color.Gray,
+                            uncheckedTrackColor = Color.White.copy(alpha = 0.08f)
+                        ),
+                        modifier = Modifier.height(28.dp)
+                    )
+                }
+
                 // RECENTLY WATCHED HORIZONTAL ROW (Netflix style)
                 if (recentsList.isNotEmpty() && searchQuery.isEmpty()) {
                     Text(
@@ -776,19 +920,7 @@ fun VidexAppScreen(
                                     .background(CardSurface)
                                     .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(8.dp))
                                     .clickable {
-                                        activeChannel = chan
-                                        isAppMiniPlayerActived = false
-                                        exoplayer.stop()
-                                        exoplayer.setMediaItem(
-                                            MediaItem
-                                                .Builder()
-                                                .setUri(getEffectiveStreamUrl(chan))
-                                                .setMimeType(MimeTypes.APPLICATION_M3U8)
-                                                .build()
-                                        )
-                                        exoplayer.prepare()
-                                        exoplayer.play()
-                                        Toast.makeText(context, "Sintonizando reciente: ${chan.name}", Toast.LENGTH_SHORT).show()
+                                        playChannel(chan)
                                     }
                                     .padding(horizontal = 10.dp, vertical = 6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -859,19 +991,7 @@ fun VidexAppScreen(
                                     .background(CardSurface)
                                     .border(1.dp, Color.White.copy(alpha = 0.04f), RoundedCornerShape(12.dp))
                                     .clickable {
-                                        activeChannel = channel
-                                        isAppMiniPlayerActived = false // Maximize fully
-                                        exoplayer.stop()
-                                        exoplayer.setMediaItem(
-                                            MediaItem
-                                                .Builder()
-                                                .setUri(getEffectiveStreamUrl(channel))
-                                                .setMimeType(MimeTypes.APPLICATION_M3U8)
-                                                .build()
-                                        )
-                                        exoplayer.prepare()
-                                        exoplayer.play()
-                                        Toast.makeText(context, "Sintonizando ${channel.name}...", Toast.LENGTH_SHORT).show()
+                                        playChannel(channel)
                                     }
                                     .padding(if (gridColumns == 1) 12.dp else 10.dp)
                             ) {
@@ -1357,13 +1477,43 @@ fun VidexAppScreen(
                                                     recordingsDir.mkdirs()
                                                 }
                                                 val file = java.io.File(recordingsDir, "$id.mp4")
-                                                try {
-                                                    file.writeBytes(ByteArray(1024) { 0 })
-                                                } catch (e: Exception) {
-                                                    e.printStackTrace()
-                                                }
                                                 
                                                 val randomSampleClip = SAMPLE_RECORDING_VIDEOS.random()
+                                                
+                                                // Descargamos asíncronamente un segmento MP4 real e idóneo para que el archivo físico exista en disco y sea reproducible
+                                                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                                    try {
+                                                        val url = java.net.URL(randomSampleClip)
+                                                        val conn = url.openConnection()
+                                                        conn.connectTimeout = 3000
+                                                        conn.readTimeout = 3000
+                                                        conn.getInputStream().use { input ->
+                                                            file.outputStream().use { output ->
+                                                                val buf = ByteArray(1024 * 4)
+                                                                var r: Int
+                                                                var total = 0
+                                                                while (input.read(buf).also { r = it } != -1) {
+                                                                    output.write(buf, 0, r)
+                                                                    total += r
+                                                                    if (total > 1024 * 1024) { // Max 1MB para descarga inmediata
+                                                                        break
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                        // Fallback local seguro
+                                                        try {
+                                                            file.writeBytes(ByteArray(50000) { 0 })
+                                                        } catch (ex: Exception) {}
+                                                    } finally {
+                                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                            recordingsList = getRecordings(context)
+                                                        }
+                                                    }
+                                                }
+
                                                 val newRec = Recording(
                                                     id = id,
                                                     channelName = activeChannel?.name ?: "Canal Sintonizado",
@@ -1464,6 +1614,40 @@ fun VidexAppScreen(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text("SISTEMA PiP", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                         Text("Paso externo", color = Color.Gray, fontSize = 7.sp)
+                                    }
+
+                                    // 5. Open In VLC External Player Button
+                                    val currentPlaybackUrl = activeChannel?.let { getEffectiveStreamUrl(it) } ?: playingRecording?.sourceUrl ?: ""
+                                    if (currentPlaybackUrl.isNotEmpty()) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.clickable {
+                                                exoplayer.stop()
+                                                activeChannel = null
+                                                playingRecording = null
+                                                isAppMiniPlayerActived = false
+                                                playInExternalPlayer(context, currentPlaybackUrl)
+                                            }
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(CircleShape)
+                                                    .background(accentColor.copy(alpha = 0.15f))
+                                                    .border(1.dp, accentColor, CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PlayCircle,
+                                                    contentDescription = "Abrir en VLC",
+                                                    tint = accentColor,
+                                                    modifier = Modifier.size(22.dp)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text("ABRIR EN VLC", color = accentColor, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                            Text("Externa 🍿", color = Color.Gray, fontSize = 7.sp)
+                                        }
                                     }
                                 }
                             }
@@ -1737,19 +1921,7 @@ fun VidexAppScreen(
                                     .background(CardSurface)
                                     .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp))
                                     .clickable {
-                                        activeChannel = otherChan
-                                        playingRecording = null
-                                        exoplayer.stop()
-                                        exoplayer.setMediaItem(
-                                            MediaItem
-                                                .Builder()
-                                                .setUri(getEffectiveStreamUrl(otherChan))
-                                                .setMimeType(MimeTypes.APPLICATION_M3U8)
-                                                .build()
-                                        )
-                                        exoplayer.prepare()
-                                        exoplayer.play()
-                                        Toast.makeText(context, "Sintonizando ${otherChan.name}...", Toast.LENGTH_SHORT).show()
+                                        playChannel(otherChan)
                                     }
                                     .padding(10.dp)
                             ) {
@@ -2075,18 +2247,7 @@ fun VidexAppScreen(
                             showRecordingSaveDialog = false
                             val latestRec = recordingsList.firstOrNull()
                             if (latestRec != null) {
-                                playingRecording = latestRec
-                                activeChannel = null
-                                exoplayer.stop()
-                                exoplayer.setMediaItem(
-                                    MediaItem.Builder()
-                                        .setUri(latestRec.sourceUrl)
-                                        .setMimeType(MimeTypes.VIDEO_MP4)
-                                        .build()
-                                )
-                                exoplayer.prepare()
-                                exoplayer.play()
-                                Toast.makeText(context, "Reproduciendo grabación de ${latestRec.channelName}...", Toast.LENGTH_SHORT).show()
+                                playRecordingItem(latestRec)
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = accentColor)
