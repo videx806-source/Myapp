@@ -56,6 +56,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.mediarouter.media.MediaRouter
+import androidx.mediarouter.media.MediaRouteSelector
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -79,10 +81,10 @@ val THEMES_LIST = listOf(
 
 fun getGroupColor(group: String, currentPrimary: Color): Color {
     return when (group.uppercase()) {
-        "GENERAL" -> Color(0xFF3B82F6)
-        "EVENTOS" -> Color(0xFFEF4444)
-        "MÚSICA", "MUSICA" -> Color(0xFF10B981)
-        "PLUTO" -> Color(0xFF8B5CF6)
+        "GENERAL" -> Color(0xFF4A90D9)
+        "EVENTOS" -> Color(0xFFE53935)
+        "MÚSICA", "MUSICA" -> Color(0xFF00D4FF)
+        "PLUTO" -> Color(0xFF3D5AFE)
         else -> currentPrimary
     }
 }
@@ -177,7 +179,7 @@ fun VidexAppScreen(
     var favoritesList by remember { mutableStateOf(getFavorites(context)) }
 
     // System configurations & dialogues
-    var isParentalLocked by remember { mutableStateOf(true) }
+    var isParentalLocked by remember { mutableStateOf(false) }
     var showPinDialog by remember { mutableStateOf(false) }
     var pinValue by remember { mutableStateOf("") }
     var parentalPinError by remember { mutableStateOf("") }
@@ -439,32 +441,6 @@ fun VidexAppScreen(
                                 )
                             }
 
-                            // Parental locks
-                            IconButton(
-                                onClick = {
-                                    if (isParentalLocked) {
-                                        showPinDialog = true
-                                    } else {
-                                        isParentalLocked = true
-                                        Toast.makeText(context, "Filtro Parental Activado", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .background(
-                                        if (isParentalLocked) Color(0xFFFF416C).copy(alpha = 0.12f)
-                                        else Color.White.copy(alpha = 0.05f),
-                                        CircleShape
-                                    )
-                            ) {
-                                Icon(
-                                    imageVector = if (isParentalLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                                    contentDescription = "Parental",
-                                    tint = if (isParentalLocked) Color(0xFFFF416C) else Color.White.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
                             // Theme palette cycle
                             IconButton(
                                 onClick = { selectedThemeIndex = (selectedThemeIndex + 1) % THEMES_LIST.size },
@@ -624,7 +600,7 @@ fun VidexAppScreen(
                         .padding(vertical = 10.dp, horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(categories) { cat ->
+                    items(categories, key = { it }) { cat ->
                         val isSelected = selectedCategory.uppercase() == cat.uppercase()
                         val colorStyle = getGroupColor(cat, accentColor)
                         Box(
@@ -651,16 +627,12 @@ fun VidexAppScreen(
                 }
 
                 // CORE CHANNELS GRID
-                val filteredChannels = remember(searchQuery, selectedCategory, showOnlyFavorites, favoritesList, isParentalLocked) {
+                val filteredChannels = remember(searchQuery, selectedCategory, showOnlyFavorites, favoritesList) {
                     CHANNELS_LIST.filter { channel ->
-                        if (isParentalLocked && channel.group.uppercase() == "EVENTOS") {
-                            false
-                        } else {
-                            val matchesCategory = selectedCategory == "TODOS" || channel.group.uppercase() == selectedCategory.uppercase()
-                            val matchesSearch = channel.name.contains(searchQuery, ignoreCase = true)
-                            val matchesFav = !showOnlyFavorites || favoritesList.contains(channel.name)
-                            matchesCategory && matchesSearch && matchesFav
-                        }
+                        val matchesCategory = selectedCategory == "TODOS" || channel.group.uppercase() == selectedCategory.uppercase()
+                        val matchesSearch = channel.name.contains(searchQuery, ignoreCase = true)
+                        val matchesFav = !showOnlyFavorites || favoritesList.contains(channel.name)
+                        matchesCategory && matchesSearch && matchesFav
                     }
                 }
 
@@ -687,7 +659,7 @@ fun VidexAppScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(filteredChannels) { channel ->
+                        items(filteredChannels, key = { it.name }) { channel ->
                             val isFavorite = favoritesList.contains(channel.name)
                             val groupCol = getGroupColor(channel.group, accentColor)
 
@@ -1528,7 +1500,7 @@ fun VidexAppScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        items(recommendedList) { otherChan ->
+                        items(recommendedList, key = { it.name }) { otherChan ->
                             val otherGroupColor = getGroupColor(otherChan.group, accentColor)
                             Box(
                                 modifier = Modifier
@@ -1672,7 +1644,38 @@ fun VidexAppScreen(
         // DIALOGS & OVERLAYS GLOBAL
         // ============================================
 
-        // 1. CHROMECAST DEVICE SCANNER DIALOG
+        // 1. CHROMECAST DEVICE SCANNER DIALOG WITH REAL MEDIAROUTER
+        val routerRoutes = remember { mutableStateListOf<MediaRouter.RouteInfo>() }
+        DisposableEffect(isCastDialogOpen) {
+            if (isCastDialogOpen) {
+                val mediaRouter = MediaRouter.getInstance(context)
+                val selector = MediaRouteSelector.Builder()
+                    .addControlCategory("android.media.intent.category.LIVE_VIDEO")
+                    .addControlCategory("android.media.intent.category.REMOTE_PLAYBACK")
+                    .build()
+                val callback = object : MediaRouter.Callback() {
+                    fun updateRoutes() {
+                        routerRoutes.clear()
+                        for (route in mediaRouter.routes) {
+                            if (route.isEnabled && !route.isDefault && !route.name.isNullOrEmpty()) {
+                                routerRoutes.add(route)
+                            }
+                        }
+                    }
+                    override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) { updateRoutes() }
+                    override fun onRouteRemoved(router: MediaRouter, route: MediaRouter.RouteInfo) { updateRoutes() }
+                    override fun onRouteChanged(router: MediaRouter, route: MediaRouter.RouteInfo) { updateRoutes() }
+                }
+                mediaRouter.addCallback(selector, callback, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY)
+                callback.updateRoutes()
+                onDispose {
+                    mediaRouter.removeCallback(callback)
+                }
+            } else {
+                onDispose {}
+            }
+        }
+
         if (isCastDialogOpen) {
             AlertDialog(
                 onDismissRequest = { isCastDialogOpen = false },
@@ -1682,22 +1685,51 @@ fun VidexAppScreen(
                         Text("Sintonice de forma inalámbrica en cualquier Smart TV o Google Chromecast en su red:", color = Color.LightGray, fontSize = 11.sp)
                         Divider(color = Color.White.copy(alpha = 0.05f))
 
-                        val simulatedTvDevices = listOf("Smart TV Samsung Living", "Chromecast Dormitorio Principal", "LG ThinQ Cocina")
-                        simulatedTvDevices.forEach { device ->
+                        if (routerRoutes.isEmpty()) {
+                            // Empty state instructions
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.02f))
+                                    .padding(12.dp)
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                                    CircularProgressIndicator(color = accentColor, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Buscando Smart TVs y Chromecasts activos...",
+                                        color = Color.Gray,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Asegúrese de que el dispositivo esté encendido y conectado en la misma red Wi-Fi.",
+                                        color = Color.DarkGray,
+                                        fontSize = 9.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                            
+                            // To allow testing, keep a mock/virtual test option labeled as virtual
+                            val testDevice = "Sintetizador Virtual IPTV"
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(Color.White.copy(alpha = 0.03f))
                                     .clickable {
-                                        if (isCasting && castingDeviceName == device) {
+                                        if (isCasting && castingDeviceName == testDevice) {
                                             isCasting = false
                                             castingDeviceName = ""
                                             Toast.makeText(context, "Transmisión detenida", Toast.LENGTH_SHORT).show()
                                         } else {
                                             isCasting = true
-                                            castingDeviceName = device
-                                            Toast.makeText(context, "Conectado a $device con éxito", Toast.LENGTH_SHORT).show()
+                                            castingDeviceName = testDevice
+                                            Toast.makeText(context, "Conectado a $testDevice con éxito (SIMULADO)", Toast.LENGTH_SHORT).show()
                                         }
                                         isCastDialogOpen = false
                                     }
@@ -1708,14 +1740,52 @@ fun VidexAppScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.Tv, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(10.dp))
-                                    Text(device, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text(testDevice, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                                 Icon(
-                                    imageVector = if (isCasting && castingDeviceName == device) Icons.Default.CheckCircle else Icons.Default.Cast,
+                                    imageVector = if (isCasting && castingDeviceName == testDevice) Icons.Default.CheckCircle else Icons.Default.Cast,
                                     contentDescription = null,
-                                    tint = if (isCasting && castingDeviceName == device) accentColor else Color.Gray,
+                                    tint = if (isCasting && castingDeviceName == testDevice) accentColor else Color.Gray,
                                     modifier = Modifier.size(16.dp)
                                 )
+                            }
+                        } else {
+                            // Show ONLY connected and available physical devices detected via MediaRouter
+                            routerRoutes.forEach { route ->
+                                val device = route.name
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.White.copy(alpha = 0.03f))
+                                        .clickable {
+                                            if (isCasting && castingDeviceName == device) {
+                                                isCasting = false
+                                                castingDeviceName = ""
+                                                Toast.makeText(context, "Transmisión detenida", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                isCasting = true
+                                                castingDeviceName = device
+                                                Toast.makeText(context, "Conectado a $device con éxito", Toast.LENGTH_SHORT).show()
+                                            }
+                                            isCastDialogOpen = false
+                                        }
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Tv, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(device, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Icon(
+                                        imageVector = if (isCasting && castingDeviceName == device) Icons.Default.CheckCircle else Icons.Default.Cast,
+                                        contentDescription = null,
+                                        tint = if (isCasting && castingDeviceName == device) accentColor else Color.Gray,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
 
@@ -1805,61 +1875,7 @@ fun VidexAppScreen(
             )
         }
 
-        // 3. PIN SECURITY PARENTAL DIALOG
-        if (showPinDialog) {
-            AlertDialog(
-                onDismissRequest = { showPinDialog = false },
-                title = { Text("Filtro Parental: Desbloquear PIN", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text("Para desbloquear los sintonizadores 'EVENTOS', introduzca el PIN de seguridad asignado (Por defecto: 1234):", color = Color.LightGray, fontSize = 11.sp)
-                        OutlinedTextField(
-                            value = pinValue,
-                            onValueChange = { pinValue = it },
-                            placeholder = { Text("****") },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = accentColor
-                            ),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        if (parentalPinError.isNotEmpty()) {
-                            Text(parentalPinError, color = Color.Red, fontSize = 10.sp)
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (pinValue == "1234" || pinValue == "0000") {
-                                isParentalLocked = false
-                                showPinDialog = false
-                                parentalPinError = ""
-                                pinValue = ""
-                                Toast.makeText(context, "Acceso concedido a EVENTOS", Toast.LENGTH_SHORT).show()
-                            } else {
-                                parentalPinError = "PIN Incorrecto. Por defecto use: 1234"
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = accentColor)
-                    ) {
-                        Text("ACEPTAR", color = Color.Black)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = {
-                        showPinDialog = false
-                        parentalPinError = ""
-                        pinValue = ""
-                    }) {
-                        Text("CANCELAR", color = Color.White)
-                    }
-                },
-                containerColor = CardSurface
-            )
-        }
+        // 3. PIN SECURITY PARENTAL DIALOG REMOVED PERMANENTLY AS UNLOCKED BY DEFAULT
     }
 }
 
@@ -2089,9 +2105,14 @@ fun ExoPlayerViewContainer(
     val context = LocalContext.current
 
     LaunchedEffect(url, isMuted) {
+        val mimeType = if (url.contains(".mp4") || url.contains("VidexRecordings") || url.contains(".mkv")) {
+            MimeTypes.APPLICATION_MP4
+        } else {
+            MimeTypes.APPLICATION_M3U8
+        }
         val mediaItem = MediaItem.Builder()
             .setUri(url)
-            .setMimeType(MimeTypes.APPLICATION_M3U8)
+            .setMimeType(mimeType)
             .build()
         player.setMediaItem(mediaItem)
         player.volume = if (isMuted) 0f else 1f
