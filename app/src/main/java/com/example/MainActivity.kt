@@ -33,6 +33,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -136,6 +139,22 @@ fun VidexAppScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+
+    // --- Lifecycle optimization for low-end devices ---
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                try {
+                    exoPlayer.pause()
+                } catch (e: Exception) {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // --- Tab state ---
     var currentTab by remember { mutableStateOf(NavigationTab.LIVE) }
@@ -252,9 +271,10 @@ fun VidexAppScreen(
         playerErrorMsg = ""
         
         val uri = Uri.parse(rec.localPath)
+        val mime = if (rec.localPath.endsWith(".ts")) "video/mp2t" else "video/mp4"
         val mediaItem = MediaItem.Builder()
             .setUri(uri)
-            .setMimeType(MimeTypes.VIDEO_MP4)
+            .setMimeType(mime)
             .build()
             
         try {
@@ -651,7 +671,9 @@ fun VidexAppScreen(
                                                 if (!recordingsDir.exists()) {
                                                     recordingsDir.mkdirs()
                                                 }
-                                                val file = File(recordingsDir, "$id.mp4")
+                                                val isHls = streamUrl.contains(".m3u8")
+                                                val extension = if (isHls) "ts" else "mp4"
+                                                val file = File(recordingsDir, "$id.$extension")
                                                 
                                                 activeRecordingId = id
                                                 activeRecordingChannelName = chanName
@@ -661,36 +683,16 @@ fun VidexAppScreen(
                                                 
                                                 Toast.makeText(context, "Guardando sintonización en vivo...", Toast.LENGTH_SHORT).show()
 
-                                                coroutineScope.launch(Dispatchers.IO) {
+                                                coroutineScope.launch {
                                                     try {
-                                                        val url = URL(streamUrl)
-                                                        val conn = url.openConnection().apply {
-                                                            connectTimeout = 4000
-                                                            readTimeout = 4000
-                                                        }
-                                                        conn.getInputStream().use { input ->
-                                                            file.outputStream().use { output ->
-                                                                val buffer = ByteArray(1024 * 8)
-                                                                var read: Int
-                                                                var bytesWritten = 0L
-                                                                while (isRecordingActive) {
-                                                                    read = input.read(buffer)
-                                                                    if (read == -1) break
-                                                                    output.write(buffer, 0, read)
-                                                                    bytesWritten += read
-                                                                    if (bytesWritten > 1024 * 1024 * 35) { // Safety cap: 35MB
-                                                                        break
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+                                                        HlsRecorder.recordStream(
+                                                            streamUrl = streamUrl,
+                                                            outputFile = file,
+                                                            isActiveProvider = { isRecordingActive },
+                                                            onProgress = {}
+                                                        )
                                                     } catch (e: Exception) {
                                                         e.printStackTrace()
-                                                        try {
-                                                            if (file.length() <= 0) {
-                                                                file.writeBytes(ByteArray(1024 * 120) { 0 })
-                                                            }
-                                                        } catch (err: Exception) {}
                                                     } finally {
                                                         withContext(Dispatchers.Main) {
                                                             recordingsList = RecordingDataProvider.getRecordings(context)
