@@ -1,0 +1,29 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Outer TV frame -->
+    <path
+        android:fillColor="#00D4FF"
+        android:pathData="M24,30h60a8,8 0,0 1 8,8v28a8,8 0,0 1 -8,8h-60a8,8 0,0 1 -8,-8v-28a8,8 0,0 1 8,-8z" />
+    
+    <!-- Screen mask -->
+    <path
+        android:fillColor="#111118"
+        android:pathData="M28,34h52a4,4 0,0 1 4,4v20a4,4 0,0 1 -4,4h-52a4,4 0,0 1 -4,-4v-20a4,4 0,0 1 4,-4z" />
+        
+    <!-- Play sign inside the screen -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,41.5v15l13,-7.5z" />
+
+    <!-- Antennae / TV Feet -->
+    <path
+        android:fillColor="#00D4FF"
+        android:pathData="M48,74h12v4h-12z" />
+    <path
+        android:fillColor="#00D4FF"
+        android:pathData="M38,78h32v3h-32z" />
+</vector>
